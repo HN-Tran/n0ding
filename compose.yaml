@@ -1,0 +1,22 @@
+services:
+  n0ding:
+    build:
+      context: .
+      args:
+        VERSION: dev
+    image: n0ding:dev
+    environment:
+      N0DING_PUBLIC_URL: ${N0DING_PUBLIC_URL:-http://localhost:8080}
+    ports:
+      - "${N0DING_PORT:-8080}:8080"
+    volumes:
+      - n0ding-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  n0ding-data:

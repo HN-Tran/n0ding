@@ -1,0 +1,229 @@
+package httpserver
+
+import (
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"log/slog"
+	"net/http"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/HN-Tran/n0ding/internal/cache"
+	"github.com/HN-Tran/n0ding/internal/config"
+	"github.com/HN-Tran/n0ding/internal/npmproxy"
+)
+
+type Server struct {
+	mux          *http.ServeMux
+	version      string
+	publicURL    string
+	started      time.Time
+	repositories []*npmproxy.Proxy
+	byName       map[string]*npmproxy.Proxy
+}
+
+type statusResponse struct {
+	Version      string              `json:"version"`
+	Status       string              `json:"status"`
+	Uptime       string              `json:"uptime"`
+	Repositories []npmproxy.Snapshot `json:"repositories"`
+}
+
+func New(cfg config.Config, version string, logger *slog.Logger) (http.Handler, error) {
+	server := &Server{
+		mux:       http.NewServeMux(),
+		version:   version,
+		publicURL: strings.TrimRight(cfg.Server.PublicBaseURL, "/"),
+		started:   time.Now(),
+		byName:    make(map[string]*npmproxy.Proxy),
+	}
+
+	for _, repository := range cfg.Repositories {
+		store, err := cache.New(filepath.Join(cfg.Storage.Path, repository.Name))
+		if err != nil {
+			return nil, fmt.Errorf("repository %q: %w", repository.Name, err)
+		}
+		proxy, err := npmproxy.New(npmproxy.Options{
+			Name:                 repository.Name,
+			Path:                 repository.Path,
+			Upstream:             repository.Upstream,
+			PublicBaseURL:        cfg.Server.PublicBaseURL,
+			TTL:                  repository.TTL,
+			ForwardAuthorization: repository.ForwardAuthorization,
+			Store:                store,
+			Logger:               logger,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("repository %q: %w", repository.Name, err)
+		}
+		server.repositories = append(server.repositories, proxy)
+		server.byName[repository.Name] = proxy
+		server.mux.Handle(repository.Path, proxy)
+	}
+
+	server.mux.HandleFunc("/healthz", server.health)
+	server.mux.HandleFunc("/api/v1/status", server.status)
+	server.mux.HandleFunc("/api/v1/repositories/", server.repositoryAPI)
+	server.mux.HandleFunc("/metrics", server.metrics)
+	server.mux.HandleFunc("/", server.dashboard)
+	return securityHeaders(server.mux), nil
+}
+
+func (s *Server) health(writer http.ResponseWriter, request *http.Request) {
+	if request.URL.Path != "/healthz" {
+		http.NotFound(writer, request)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json")
+	_, _ = writer.Write([]byte(`{"status":"ok"}`))
+}
+
+func (s *Server) status(writer http.ResponseWriter, request *http.Request) {
+	if request.URL.Path != "/api/v1/status" {
+		http.NotFound(writer, request)
+		return
+	}
+	snapshots := make([]npmproxy.Snapshot, 0, len(s.repositories))
+	for _, repository := range s.repositories {
+		snapshots = append(snapshots, repository.Snapshot())
+	}
+	writeJSON(writer, statusResponse{
+		Version:      s.version,
+		Status:       "ok",
+		Uptime:       time.Since(s.started).Round(time.Second).String(),
+		Repositories: snapshots,
+	})
+}
+
+func (s *Server) repositoryAPI(writer http.ResponseWriter, request *http.Request) {
+	path := strings.TrimPrefix(request.URL.Path, "/api/v1/repositories/")
+	name, action, ok := strings.Cut(path, "/")
+	if !ok || action != "setup" {
+		http.NotFound(writer, request)
+		return
+	}
+	repository := s.byName[name]
+	if repository == nil {
+		http.NotFound(writer, request)
+		return
+	}
+	writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = writer.Write([]byte(repository.SetupSnippet()))
+}
+
+func (s *Server) metrics(writer http.ResponseWriter, request *http.Request) {
+	if request.URL.Path != "/metrics" {
+		http.NotFound(writer, request)
+		return
+	}
+	writer.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	for _, repository := range s.repositories {
+		snapshot := repository.Snapshot()
+		label := fmt.Sprintf(`repository=%q,type=%q`, snapshot.Name, snapshot.Type)
+		fmt.Fprintf(writer, "n0ding_repository_requests_total{%s} %d\n", label, snapshot.Requests)
+		fmt.Fprintf(writer, "n0ding_repository_cache_hits_total{%s} %d\n", label, snapshot.CacheHits)
+		fmt.Fprintf(writer, "n0ding_repository_cache_misses_total{%s} %d\n", label, snapshot.CacheMisses)
+		fmt.Fprintf(writer, "n0ding_repository_errors_total{%s} %d\n", label, snapshot.Errors)
+		fmt.Fprintf(writer, "n0ding_repository_storage_bytes{%s} %d\n", label, snapshot.StorageBytes)
+		fmt.Fprintf(writer, "n0ding_repository_cache_objects{%s} %d\n", label, snapshot.CacheObjects)
+	}
+}
+
+func (s *Server) dashboard(writer http.ResponseWriter, request *http.Request) {
+	if request.URL.Path != "/" {
+		http.NotFound(writer, request)
+		return
+	}
+	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = dashboardTemplate.Execute(writer, map[string]string{
+		"Version":   s.version,
+		"PublicURL": s.publicURL,
+	})
+}
+
+func writeJSON(writer http.ResponseWriter, value any) {
+	writer.Header().Set("Content-Type", "application/json")
+	encoder := json.NewEncoder(writer)
+	encoder.SetIndent("", "  ")
+	_ = encoder.Encode(value)
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'")
+		writer.Header().Set("Referrer-Policy", "no-referrer")
+		writer.Header().Set("X-Content-Type-Options", "nosniff")
+		next.ServeHTTP(writer, request)
+	})
+}
+
+var dashboardTemplate = template.Must(template.New("dashboard").Parse(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>n0ding</title>
+  <style>
+    :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    body { margin: 0; background: #0a0c0b; color: #e8eee9; }
+    main { width: min(960px, calc(100% - 32px)); margin: 64px auto; }
+    header { display: flex; justify-content: space-between; align-items: baseline; gap: 24px; }
+    h1 { font-size: clamp(2rem, 8vw, 4.5rem); margin: 0; letter-spacing: -.08em; }
+    .accent, a { color: #8cf0ae; }
+    .muted { color: #8b988f; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-top: 48px; }
+    article { border: 1px solid #29332c; background: #101411; padding: 20px; border-radius: 10px; }
+    article h2 { margin: 0 0 20px; font-size: 1rem; }
+    dl { display: grid; grid-template-columns: 1fr auto; gap: 10px 16px; margin: 0; }
+    dt { color: #8b988f; }
+    dd { margin: 0; }
+    pre { overflow: auto; padding: 12px; background: #090b0a; border-radius: 6px; color: #b7f8cc; }
+    .empty { grid-column: 1 / -1; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <div class="muted">homelab-native package hub</div>
+        <h1>n<span class="accent">0</span>ding</h1>
+      </div>
+      <div class="muted">v{{.Version}}</div>
+    </header>
+    <section id="repositories" class="grid">
+      <article class="empty">Loading repository status…</article>
+    </section>
+  </main>
+  <script>
+    const escapeHTML = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const size = bytes => {
+      if (!bytes) return '0 B';
+      const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+      const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+      return (bytes / Math.pow(1024, index)).toFixed(index ? 1 : 0) + ' ' + units[index];
+    };
+    async function refresh() {
+      const response = await fetch('/api/v1/status');
+      const data = await response.json();
+      document.querySelector('#repositories').innerHTML = data.repositories.map(repo => ` + "`" + `
+        <article>
+          <h2><span class="accent">●</span> ${escapeHTML(repo.name)} <span class="muted">/${escapeHTML(repo.type)}</span></h2>
+          <dl>
+            <dt>Requests</dt><dd>${repo.requests}</dd>
+            <dt>Cache hit ratio</dt><dd>${(repo.hit_ratio * 100).toFixed(1)}%</dd>
+            <dt>Objects</dt><dd>${repo.cache_objects}</dd>
+            <dt>Storage</dt><dd>${size(repo.storage_bytes)}</dd>
+          </dl>
+          <pre>npm config set registry {{.PublicURL}}${escapeHTML(repo.path)}</pre>
+          <a href="/api/v1/repositories/${encodeURIComponent(repo.name)}/setup">setup snippet</a>
+        </article>` + "`" + `).join('');
+    }
+    refresh().catch(error => {
+      document.querySelector('#repositories').innerHTML = '<article class="empty">Status unavailable: ' + escapeHTML(error) + '</article>';
+    });
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>`))
