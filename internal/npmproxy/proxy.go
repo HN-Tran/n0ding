@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/HN-Tran/n0ding/internal/cache"
+	"github.com/HN-Tran/n0ding/internal/repository"
 )
 
 const maxMetadataBytes = 64 << 20
@@ -51,20 +52,6 @@ type counters struct {
 	hits     atomic.Uint64
 	misses   atomic.Uint64
 	errors   atomic.Uint64
-}
-
-type Snapshot struct {
-	Name         string  `json:"name"`
-	Type         string  `json:"type"`
-	Path         string  `json:"path"`
-	Upstream     string  `json:"upstream"`
-	Requests     uint64  `json:"requests"`
-	CacheHits    uint64  `json:"cache_hits"`
-	CacheMisses  uint64  `json:"cache_misses"`
-	Errors       uint64  `json:"errors"`
-	HitRatio     float64 `json:"hit_ratio"`
-	StorageBytes int64   `json:"storage_bytes"`
-	CacheObjects int64   `json:"cache_objects"`
 }
 
 func New(options Options) (*Proxy, error) {
@@ -140,7 +127,7 @@ func (p *Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	p.serveMiss(writer, request, target, key, cacheable)
 }
 
-func (p *Proxy) Snapshot() Snapshot {
+func (p *Proxy) Snapshot() repository.Snapshot {
 	requests := p.stats.requests.Load()
 	hits := p.stats.hits.Load()
 	misses := p.stats.misses.Load()
@@ -152,7 +139,7 @@ func (p *Proxy) Snapshot() Snapshot {
 	if err != nil {
 		p.logger.Warn("cache size scan failed", "repository", p.name, "error", err)
 	}
-	return Snapshot{
+	return repository.Snapshot{
 		Name:         p.name,
 		Type:         "npm",
 		Path:         p.path,

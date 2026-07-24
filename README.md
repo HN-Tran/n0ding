@@ -6,18 +6,22 @@ n0ding is an experimental, lightweight proxy cache for package registries. It is
 config-first, Docker-friendly, and deliberately smaller than an enterprise
 artifact manager.
 
-The current spike supports **npm read-through caching**:
+The current spike supports **npm and OCI read-through caching**:
 
 - standard npm registry requests under `/npm/`
 - persistent metadata and tarball caching
 - metadata rewriting so tarball downloads also pass through n0ding
+- standard OCI Distribution pull requests under `/v2/`
+- local manifest, image-index, config, and layer caching
+- SHA-256 verification before OCI objects are committed to the cache
+- upstream authorization checks before authenticated OCI cache hits
 - cache hit, object, and storage statistics
 - Prometheus-compatible metrics
-- generated npm setup snippets
+- generated npm and Docker setup snippets
 
 This is a proof of concept, not production-ready supply-chain infrastructure.
-Authentication, private publishing, retention cleanup, OCI, PyPI, and S3 storage
-are not implemented yet.
+Client authentication, private publishing, retention cleanup, PyPI, and S3
+storage are not implemented yet.
 
 ## Quickstart
 
@@ -47,6 +51,18 @@ Responses expose `X-N0ding-Cache: MISS` or `HIT`. Runtime state is available at:
 - `GET /api/v1/repositories/npm/setup`
 - `GET /metrics`
 - `GET /healthz`
+
+For a Docker Engine configured to allow the local HTTP registry, pull through
+the OCI adapter with:
+
+```sh
+docker pull localhost:8080/library/alpine:3.20
+```
+
+Docker uses HTTPS for registries by default. Keep the HTTP exception local to a
+development daemon; use TLS in any shared environment. The reproducible
+Docker-in-Docker test commands and measured results are recorded in the
+[compatibility matrix](docs/compatibility.md).
 
 To stop the service without deleting cached data:
 

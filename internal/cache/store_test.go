@@ -2,6 +2,8 @@ package cache
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"net/http"
 	"os"
 	"testing"
@@ -67,5 +69,26 @@ func TestSize(t *testing.T) {
 	}
 	if bytes != 7 || objects != 2 {
 		t.Fatalf("size = (%d, %d)", bytes, objects)
+	}
+}
+
+func TestVerifiedStreamRejectsInvalidBody(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifyErr := errors.New("digest mismatch")
+	err = store.PutStreamVerified(
+		"invalid",
+		Metadata{Status: http.StatusOK},
+		bytes.NewReader([]byte("invalid")),
+		io.Discard,
+		func(int64) error { return verifyErr },
+	)
+	if !errors.Is(err, verifyErr) {
+		t.Fatalf("put error = %v", err)
+	}
+	if _, found, lookupErr := store.Lookup("invalid", time.Hour); lookupErr != nil || found {
+		t.Fatalf("lookup after failed verification: found=%v err=%v", found, lookupErr)
 	}
 }

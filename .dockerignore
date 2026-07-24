@@ -1,5 +1,7 @@
 .git
 .github
+.tmp
 data
+dist
 docs
 *.md

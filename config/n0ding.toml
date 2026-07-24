@@ -12,3 +12,9 @@ path = "/npm/"
 upstream = "https://registry.npmjs.org"
 ttl = "24h"
 forward_authorization = false
+
+[repository.oci]
+type = "oci"
+path = "/v2/"
+upstream = "https://registry-1.docker.io"
+ttl = "1h"

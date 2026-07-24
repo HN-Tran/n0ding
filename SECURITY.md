@@ -6,8 +6,12 @@ internet or place it in a production software supply chain.
 ## Current boundaries
 
 - There is no client authentication or authorization.
-- Upstream authorization is disabled by default.
+- npm upstream authorization is disabled by default.
+- OCI Bearer credentials are forwarded to the configured upstream. A cached OCI
+  response is served only after the upstream authorizes the same request with a
+  `HEAD` response.
 - Cached content is trusted as received from the configured upstream.
+- OCI manifests and blobs are SHA-256 verified before cache commit.
 - There is no malware, signature, provenance, or vulnerability scanning.
 - There is no cache quota or automated retention cleanup.
 

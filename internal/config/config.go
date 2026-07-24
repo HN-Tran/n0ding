@@ -194,8 +194,11 @@ func (c Config) Validate() error {
 			return fmt.Errorf("duplicate repository name %q", repo.Name)
 		}
 		names[repo.Name] = struct{}{}
-		if repo.Type != "npm" {
+		if repo.Type != "npm" && repo.Type != "oci" {
 			return fmt.Errorf("repository %q: unsupported type %q", repo.Name, repo.Type)
+		}
+		if repo.Type == "oci" && repo.Path != "/v2/" {
+			return fmt.Errorf("repository %q: OCI path must be /v2/", repo.Name)
 		}
 		if !strings.HasPrefix(repo.Path, "/") || !strings.HasSuffix(repo.Path, "/") {
 			return fmt.Errorf("repository %q: path must start and end with /", repo.Name)

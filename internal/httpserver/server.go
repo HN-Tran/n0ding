@@ -13,6 +13,8 @@ import (
 	"github.com/HN-Tran/n0ding/internal/cache"
 	"github.com/HN-Tran/n0ding/internal/config"
 	"github.com/HN-Tran/n0ding/internal/npmproxy"
+	"github.com/HN-Tran/n0ding/internal/ociproxy"
+	"github.com/HN-Tran/n0ding/internal/repository"
 )
 
 type Server struct {
@@ -20,15 +22,15 @@ type Server struct {
 	version      string
 	publicURL    string
 	started      time.Time
-	repositories []*npmproxy.Proxy
-	byName       map[string]*npmproxy.Proxy
+	repositories []repository.Handler
+	byName       map[string]repository.Handler
 }
 
 type statusResponse struct {
-	Version      string              `json:"version"`
-	Status       string              `json:"status"`
-	Uptime       string              `json:"uptime"`
-	Repositories []npmproxy.Snapshot `json:"repositories"`
+	Version      string                `json:"version"`
+	Status       string                `json:"status"`
+	Uptime       string                `json:"uptime"`
+	Repositories []repository.Snapshot `json:"repositories"`
 }
 
 func New(cfg config.Config, version string, logger *slog.Logger) (http.Handler, error) {
@@ -37,30 +39,46 @@ func New(cfg config.Config, version string, logger *slog.Logger) (http.Handler, 
 		version:   version,
 		publicURL: strings.TrimRight(cfg.Server.PublicBaseURL, "/"),
 		started:   time.Now(),
-		byName:    make(map[string]*npmproxy.Proxy),
+		byName:    make(map[string]repository.Handler),
 	}
 
-	for _, repository := range cfg.Repositories {
-		store, err := cache.New(filepath.Join(cfg.Storage.Path, repository.Name))
+	for _, configuredRepository := range cfg.Repositories {
+		store, err := cache.New(filepath.Join(cfg.Storage.Path, configuredRepository.Name))
 		if err != nil {
-			return nil, fmt.Errorf("repository %q: %w", repository.Name, err)
+			return nil, fmt.Errorf("repository %q: %w", configuredRepository.Name, err)
 		}
-		proxy, err := npmproxy.New(npmproxy.Options{
-			Name:                 repository.Name,
-			Path:                 repository.Path,
-			Upstream:             repository.Upstream,
-			PublicBaseURL:        cfg.Server.PublicBaseURL,
-			TTL:                  repository.TTL,
-			ForwardAuthorization: repository.ForwardAuthorization,
-			Store:                store,
-			Logger:               logger,
-		})
+		var proxy repository.Handler
+		switch configuredRepository.Type {
+		case "npm":
+			proxy, err = npmproxy.New(npmproxy.Options{
+				Name:                 configuredRepository.Name,
+				Path:                 configuredRepository.Path,
+				Upstream:             configuredRepository.Upstream,
+				PublicBaseURL:        cfg.Server.PublicBaseURL,
+				TTL:                  configuredRepository.TTL,
+				ForwardAuthorization: configuredRepository.ForwardAuthorization,
+				Store:                store,
+				Logger:               logger,
+			})
+		case "oci":
+			proxy, err = ociproxy.New(ociproxy.Options{
+				Name:          configuredRepository.Name,
+				Path:          configuredRepository.Path,
+				Upstream:      configuredRepository.Upstream,
+				PublicBaseURL: cfg.Server.PublicBaseURL,
+				TTL:           configuredRepository.TTL,
+				Store:         store,
+				Logger:        logger,
+			})
+		default:
+			err = fmt.Errorf("unsupported repository type %q", configuredRepository.Type)
+		}
 		if err != nil {
-			return nil, fmt.Errorf("repository %q: %w", repository.Name, err)
+			return nil, fmt.Errorf("repository %q: %w", configuredRepository.Name, err)
 		}
 		server.repositories = append(server.repositories, proxy)
-		server.byName[repository.Name] = proxy
-		server.mux.Handle(repository.Path, proxy)
+		server.byName[configuredRepository.Name] = proxy
+		server.mux.Handle(configuredRepository.Path, proxy)
 	}
 
 	server.mux.HandleFunc("/healthz", server.health)
@@ -85,7 +103,7 @@ func (s *Server) status(writer http.ResponseWriter, request *http.Request) {
 		http.NotFound(writer, request)
 		return
 	}
-	snapshots := make([]npmproxy.Snapshot, 0, len(s.repositories))
+	snapshots := make([]repository.Snapshot, 0, len(s.repositories))
 	for _, repository := range s.repositories {
 		snapshots = append(snapshots, repository.Snapshot())
 	}
@@ -216,7 +234,6 @@ var dashboardTemplate = template.Must(template.New("dashboard").Parse(`<!doctype
             <dt>Objects</dt><dd>${repo.cache_objects}</dd>
             <dt>Storage</dt><dd>${size(repo.storage_bytes)}</dd>
           </dl>
-          <pre>npm config set registry {{.PublicURL}}${escapeHTML(repo.path)}</pre>
           <a href="/api/v1/repositories/${encodeURIComponent(repo.name)}/setup">setup snippet</a>
         </article>` + "`" + `).join('');
     }

@@ -54,6 +54,34 @@ upstream = "https://repo1.maven.org/maven2"
 	}
 }
 
+func TestParseOCIRepository(t *testing.T) {
+	cfg, err := Parse(strings.NewReader(`
+[repository.oci]
+type = "oci"
+path = "/v2/"
+upstream = "https://registry-1.docker.io"
+ttl = "1h"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Repositories) != 1 || cfg.Repositories[0].Type != "oci" {
+		t.Fatalf("repositories = %#v", cfg.Repositories)
+	}
+}
+
+func TestParseRejectsOCIPathPrefix(t *testing.T) {
+	_, err := Parse(strings.NewReader(`
+[repository.oci]
+type = "oci"
+path = "/oci/v2/"
+upstream = "https://registry-1.docker.io"
+`))
+	if err == nil || !strings.Contains(err.Error(), "OCI path must be /v2/") {
+		t.Fatalf("expected OCI path error, got %v", err)
+	}
+}
+
 func TestLoadResolvesStorageRelativeToConfig(t *testing.T) {
 	directory := t.TempDir()
 	configPath := filepath.Join(directory, "n0ding.toml")

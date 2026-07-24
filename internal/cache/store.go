@@ -19,10 +19,11 @@ type Store struct {
 }
 
 type Metadata struct {
-	Status       int         `json:"status"`
-	Header       http.Header `json:"header"`
-	StoredAt     time.Time   `json:"stored_at"`
-	ContentBytes int64       `json:"content_bytes"`
+	Status        int         `json:"status"`
+	Header        http.Header `json:"header"`
+	StoredAt      time.Time   `json:"stored_at"`
+	ContentBytes  int64       `json:"content_bytes"`
+	ContentDigest string      `json:"content_digest,omitempty"`
 }
 
 type Entry struct {
@@ -72,6 +73,16 @@ func (s *Store) PutBytes(key string, metadata Metadata, body []byte) error {
 }
 
 func (s *Store) PutStream(key string, metadata Metadata, source io.Reader, downstream io.Writer) error {
+	return s.PutStreamVerified(key, metadata, source, downstream, nil)
+}
+
+func (s *Store) PutStreamVerified(
+	key string,
+	metadata Metadata,
+	source io.Reader,
+	downstream io.Writer,
+	verify func(written int64) error,
+) error {
 	bodyPath, metadataPath := s.paths(key)
 	directory := filepath.Dir(bodyPath)
 	if err := os.MkdirAll(directory, 0o755); err != nil {
@@ -100,6 +111,11 @@ func (s *Store) PutStream(key string, metadata Metadata, source io.Reader, downs
 	}
 	if err := bodyTemp.Close(); err != nil {
 		return fmt.Errorf("close cache body: %w", err)
+	}
+	if verify != nil {
+		if err := verify(written); err != nil {
+			return fmt.Errorf("verify cache body: %w", err)
+		}
 	}
 
 	metadata.StoredAt = s.now().UTC()
