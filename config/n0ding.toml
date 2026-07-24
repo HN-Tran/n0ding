@@ -5,6 +5,9 @@ log_level = "info"
 
 [storage]
 path = "/data"
+max_age = "720h"
+gc_interval = "1h"
+stale_temp_age = "1h"
 
 [repository.npm]
 type = "npm"

@@ -18,6 +18,9 @@ log_level = "debug"
 
 [storage]
 path = "${N0DING_DATA}"
+max_age = "168h"
+gc_interval = "30m"
+stale_temp_age = "2h"
 
 [repository.npm]
 type = "npm"
@@ -35,12 +38,49 @@ forward_authorization = false
 	if cfg.Storage.Path != "./test-data" {
 		t.Fatalf("storage path = %q", cfg.Storage.Path)
 	}
+	if cfg.Storage.MaxAge != 168*time.Hour ||
+		cfg.Storage.GCInterval != 30*time.Minute ||
+		cfg.Storage.StaleTempAge != 2*time.Hour {
+		t.Fatalf("storage policy = %#v", cfg.Storage)
+	}
 	if len(cfg.Repositories) != 1 {
 		t.Fatalf("repositories = %d", len(cfg.Repositories))
 	}
 	repo := cfg.Repositories[0]
 	if repo.Name != "npm" || repo.TTL != 12*time.Hour {
 		t.Fatalf("repository = %#v", repo)
+	}
+}
+
+func TestParseStorageDefaults(t *testing.T) {
+	cfg, err := Parse(strings.NewReader(`
+[repository.npm]
+upstream = "https://registry.npmjs.org"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Storage.MaxAge != 30*24*time.Hour {
+		t.Fatalf("max age = %s", cfg.Storage.MaxAge)
+	}
+	if cfg.Storage.GCInterval != time.Hour {
+		t.Fatalf("GC interval = %s", cfg.Storage.GCInterval)
+	}
+	if cfg.Storage.StaleTempAge != time.Hour {
+		t.Fatalf("stale temp age = %s", cfg.Storage.StaleTempAge)
+	}
+}
+
+func TestParseRejectsInvalidStoragePolicy(t *testing.T) {
+	_, err := Parse(strings.NewReader(`
+[storage]
+max_age = "0s"
+
+[repository.npm]
+upstream = "https://registry.npmjs.org"
+`))
+	if err == nil || !strings.Contains(err.Error(), "storage.max_age must be positive") {
+		t.Fatalf("expected max age error, got %v", err)
 	}
 }
 

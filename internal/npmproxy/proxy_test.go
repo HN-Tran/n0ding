@@ -1,12 +1,14 @@
 package npmproxy
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -102,6 +104,72 @@ func TestProxyCachesTarball(t *testing.T) {
 	}
 	if requests.Load() != 1 {
 		t.Fatalf("upstream requests = %d", requests.Load())
+	}
+}
+
+func TestConcurrentCacheMissIsCoalesced(t *testing.T) {
+	const clients = 8
+	var requests atomic.Int64
+	var startedOnce sync.Once
+	started := make(chan struct{})
+	release := make(chan struct{})
+	body := []byte("shared package bytes")
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests.Add(1)
+		startedOnce.Do(func() { close(started) })
+		<-release
+		writer.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = writer.Write(body)
+	}))
+	defer upstream.Close()
+
+	store, err := cache.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy, err := New(Options{
+		Name:          "npm",
+		Path:          "/npm/",
+		Upstream:      upstream.URL,
+		PublicBaseURL: "http://packages.test",
+		TTL:           time.Hour,
+		Store:         store,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	begin := make(chan struct{})
+	responses := make(chan *httptest.ResponseRecorder, clients)
+	var wait sync.WaitGroup
+	for client := 0; client < clients; client++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-begin
+			request := httptest.NewRequest(http.MethodGet, "http://n0ding.test/npm/tiny/-/tiny-1.0.0.tgz", nil)
+			response := httptest.NewRecorder()
+			proxy.ServeHTTP(response, request)
+			responses <- response
+		}()
+	}
+	close(begin)
+	<-started
+	close(release)
+	wait.Wait()
+	close(responses)
+
+	for response := range responses {
+		if response.Code != http.StatusOK || !bytes.Equal(response.Body.Bytes(), body) {
+			t.Fatalf("response: status=%d body=%q", response.Code, response.Body.String())
+		}
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("upstream requests = %d", requests.Load())
+	}
+	snapshot := proxy.Snapshot()
+	if snapshot.CacheMisses != 1 || snapshot.CacheHits != clients-1 || snapshot.CacheObjects != 1 {
+		t.Fatalf("snapshot = %#v", snapshot)
 	}
 }
 

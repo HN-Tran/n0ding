@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -19,11 +20,21 @@ import (
 
 type Server struct {
 	mux          *http.ServeMux
+	handler      http.Handler
 	version      string
 	publicURL    string
 	started      time.Time
 	repositories []repository.Handler
 	byName       map[string]repository.Handler
+	stores       []managedStore
+	maxAge       time.Duration
+	gcInterval   time.Duration
+	logger       *slog.Logger
+}
+
+type managedStore struct {
+	name  string
+	store *cache.Store
 }
 
 type statusResponse struct {
@@ -33,13 +44,16 @@ type statusResponse struct {
 	Repositories []repository.Snapshot `json:"repositories"`
 }
 
-func New(cfg config.Config, version string, logger *slog.Logger) (http.Handler, error) {
+func New(cfg config.Config, version string, logger *slog.Logger) (*Server, error) {
 	server := &Server{
-		mux:       http.NewServeMux(),
-		version:   version,
-		publicURL: strings.TrimRight(cfg.Server.PublicBaseURL, "/"),
-		started:   time.Now(),
-		byName:    make(map[string]repository.Handler),
+		mux:        http.NewServeMux(),
+		version:    version,
+		publicURL:  strings.TrimRight(cfg.Server.PublicBaseURL, "/"),
+		started:    time.Now(),
+		byName:     make(map[string]repository.Handler),
+		maxAge:     cfg.Storage.MaxAge,
+		gcInterval: cfg.Storage.GCInterval,
+		logger:     logger,
 	}
 
 	for _, configuredRepository := range cfg.Repositories {
@@ -47,6 +61,28 @@ func New(cfg config.Config, version string, logger *slog.Logger) (http.Handler, 
 		if err != nil {
 			return nil, fmt.Errorf("repository %q: %w", configuredRepository.Name, err)
 		}
+		if cfg.Storage.StaleTempAge > 0 {
+			result, cleanupErr := store.CleanupStaleTemps(cfg.Storage.StaleTempAge)
+			if cleanupErr != nil {
+				return nil, fmt.Errorf("repository %q: clean stale temporary files: %w", configuredRepository.Name, cleanupErr)
+			}
+			if result.Files > 0 {
+				logger.Info(
+					"stale cache temporary files removed",
+					"repository", configuredRepository.Name,
+					"files", result.Files,
+					"bytes", result.Bytes,
+				)
+			}
+		}
+		if cfg.Storage.MaxAge > 0 {
+			result, gcErr := store.GC(cfg.Storage.MaxAge)
+			if gcErr != nil {
+				return nil, fmt.Errorf("repository %q: startup cache GC: %w", configuredRepository.Name, gcErr)
+			}
+			logGC(logger, configuredRepository.Name, "startup", result)
+		}
+		server.stores = append(server.stores, managedStore{name: configuredRepository.Name, store: store})
 		var proxy repository.Handler
 		switch configuredRepository.Type {
 		case "npm":
@@ -86,7 +122,49 @@ func New(cfg config.Config, version string, logger *slog.Logger) (http.Handler, 
 	server.mux.HandleFunc("/api/v1/repositories/", server.repositoryAPI)
 	server.mux.HandleFunc("/metrics", server.metrics)
 	server.mux.HandleFunc("/", server.dashboard)
-	return securityHeaders(server.mux), nil
+	server.handler = securityHeaders(server.mux)
+	return server, nil
+}
+
+func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	s.handler.ServeHTTP(writer, request)
+}
+
+func (s *Server) RunMaintenance(ctx context.Context) {
+	if s.maxAge <= 0 || s.gcInterval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(s.gcInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for _, managed := range s.stores {
+				result, err := managed.store.GC(s.maxAge)
+				if err != nil {
+					s.logger.Warn("periodic cache GC failed", "repository", managed.name, "error", err)
+					continue
+				}
+				logGC(s.logger, managed.name, "periodic", result)
+			}
+		}
+	}
+}
+
+func logGC(logger *slog.Logger, repositoryName, trigger string, result cache.GCResult) {
+	if result.Objects == 0 && result.Skipped == 0 {
+		return
+	}
+	logger.Info(
+		"cache GC completed",
+		"repository", repositoryName,
+		"trigger", trigger,
+		"objects", result.Objects,
+		"bytes", result.Bytes,
+		"skipped", result.Skipped,
+	)
 }
 
 func (s *Server) health(writer http.ResponseWriter, request *http.Request) {

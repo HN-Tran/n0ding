@@ -2,11 +2,11 @@
 
 > A homelab-native package hub.
 
-n0ding is an experimental, lightweight proxy cache for package registries. It is
-config-first, Docker-friendly, and deliberately smaller than an enterprise
-artifact manager.
+n0ding is a lightweight, read-only pull-through cache for package registries.
+It is config-first, Docker-friendly, and deliberately smaller than an
+enterprise artifact manager.
 
-The current spike supports **npm and OCI read-through caching**:
+The narrow MVP supports **npm and OCI read-through caching**:
 
 - standard npm registry requests under `/npm/`
 - persistent metadata and tarball caching
@@ -16,33 +16,41 @@ The current spike supports **npm and OCI read-through caching**:
 - SHA-256 verification before OCI objects are committed to the cache
 - upstream authorization checks before authenticated OCI cache hits
 - cache hit, object, and storage statistics
+- startup cleanup for stale temporary files
+- periodic age-based retention of complete cache objects
+- in-process coalescing of concurrent requests for the same object
 - Prometheus-compatible metrics
 - generated npm and Docker setup snippets
 
-This is a proof of concept, not production-ready supply-chain infrastructure.
-Client authentication, private publishing, retention cleanup, PyPI, and S3
-storage are not implemented yet.
+This is not a private package registry or a production supply-chain security
+platform. Client authentication, private publishing, PyPI, RBAC, and S3 storage
+are deliberately outside the MVP.
 
 ## Quickstart
 
-Requirements: Docker with Compose.
+Requirements: Docker with Compose. For local-only evaluation:
 
 ```sh
 docker compose up --build -d
+docker compose ps
+curl http://localhost:8080/healthz
 ```
 
-Open <http://localhost:8080>, then point npm at n0ding:
+Point npm at n0ding:
 
 ```sh
 npm config set registry http://localhost:8080/npm/
-npm view lodash version
+npm view @types/node version
 ```
 
-Run the same registry request twice to see a cache miss followed by a hit:
+Run the request twice with separate npm client caches to distinguish the
+n0ding cache from npm's local cache:
 
 ```sh
-curl -i http://localhost:8080/npm/is-number
-curl -i http://localhost:8080/npm/is-number
+npm view @types/node version --registry http://localhost:8080/npm/ \
+  --cache .tmp/npm-cache-1 --prefer-online
+npm view @types/node version --registry http://localhost:8080/npm/ \
+  --cache .tmp/npm-cache-2 --prefer-online
 ```
 
 Responses expose `X-N0ding-Cache: MISS` or `HIT`. Runtime state is available at:
@@ -59,9 +67,10 @@ the OCI adapter with:
 docker pull localhost:8080/library/alpine:3.20
 ```
 
-Docker uses HTTPS for registries by default. Keep the HTTP exception local to a
-development daemon; use TLS in any shared environment. The reproducible
-Docker-in-Docker test commands and measured results are recorded in the
+Docker treats non-TLS registries as insecure. Keep that exception local to a
+development daemon and use TLS for every shared deployment. See the
+[operations guide](docs/operations.md) for reverse-proxy, backup, and restore
+guidance. Reproducible real-client results are in the
 [compatibility matrix](docs/compatibility.md).
 
 To stop the service without deleting cached data:
@@ -69,6 +78,8 @@ To stop the service without deleting cached data:
 ```sh
 docker compose down
 ```
+
+Do not add `--volumes` unless you intentionally want to delete the cache.
 
 ## Local development
 
@@ -80,7 +91,9 @@ go run ./cmd/n0ding -config config/n0ding.local.toml
 ```
 
 Configuration uses a deliberately small TOML subset. Environment variables in
-string values are expanded. See [`config/n0ding.toml`](config/n0ding.toml).
+string values are expanded. See the
+[configuration reference](docs/configuration.md) and
+[`config/n0ding.toml`](config/n0ding.toml).
 
 ## Security posture
 
@@ -88,15 +101,17 @@ string values are expanded. See [`config/n0ding.toml`](config/n0ding.toml).
 - Authenticated upstream responses are not shared through the cache when
   authorization forwarding is enabled.
 - Cache writes are atomic and incomplete downloads are discarded.
-- Only `GET` and `HEAD` are accepted by the npm proxy.
+- Age-based GC deletes only complete body/metadata pairs and never temporary
+  writes.
+- Only `GET` and `HEAD` are accepted by both adapters.
 
 This does not make the spike production-ready. See
 [`SECURITY.md`](SECURITY.md) before exposing it outside a trusted network.
 
-## Project direction
+## MVP scope
 
-The [decision paper](docs/decision-paper.de.md) defines the scope, go/kill
-criteria, and one-to-two-week spike plan. The implementation follows the
-conservative path: prove npm first, then evaluate OCI before widening scope.
+The [MVP readiness scorecard](docs/spike-scorecard.md) records the release gate.
+The current scope remains read-only npm plus OCI. PyPI, publishing, user
+management, RBAC, and additional registry ecosystems must wait.
 
 Apache-2.0 licensed.

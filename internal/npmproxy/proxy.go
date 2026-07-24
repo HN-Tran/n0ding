@@ -8,7 +8,6 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -174,6 +173,7 @@ func (p *Proxy) cacheKey(target *url.URL, accept string) string {
 }
 
 func (p *Proxy) serveHit(writer http.ResponseWriter, request *http.Request, entry cache.Entry) {
+	defer entry.Close()
 	copyHeader(writer.Header(), entry.Metadata.Header)
 	writer.Header().Set("X-N0ding-Cache", "HIT")
 	writer.Header().Set("Age", strconv.FormatInt(int64(time.Since(entry.Metadata.StoredAt).Seconds()), 10))
@@ -183,13 +183,7 @@ func (p *Proxy) serveHit(writer http.ResponseWriter, request *http.Request, entr
 		return
 	}
 
-	file, err := os.Open(entry.BodyPath)
-	if err != nil {
-		p.logger.Error("open cached body failed", "repository", p.name, "error", err)
-		return
-	}
-	defer file.Close()
-	if _, err := io.Copy(writer, file); err != nil {
+	if _, err := io.Copy(writer, entry.Body); err != nil {
 		p.logger.Debug("send cached body failed", "repository", p.name, "error", err)
 	}
 }

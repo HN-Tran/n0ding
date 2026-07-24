@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -126,6 +127,65 @@ func TestBlobIsDigestVerifiedAndCached(t *testing.T) {
 	}
 	if getRequests.Load() != 1 || headRequests.Load() != 1 {
 		t.Fatalf("upstream requests: GET=%d HEAD=%d", getRequests.Load(), headRequests.Load())
+	}
+}
+
+func TestConcurrentBlobCacheMissIsCoalesced(t *testing.T) {
+	const clients = 8
+	body := []byte("shared compressed OCI layer bytes")
+	digest := digestOf(body)
+	var getRequests atomic.Int64
+	var headRequests atomic.Int64
+	var startedOnce sync.Once
+	started := make(chan struct{})
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/octet-stream")
+		writer.Header().Set("Docker-Content-Digest", digest)
+		if request.Method == http.MethodHead {
+			headRequests.Add(1)
+			return
+		}
+		getRequests.Add(1)
+		startedOnce.Do(func() { close(started) })
+		<-release
+		_, _ = writer.Write(body)
+	}))
+	defer upstream.Close()
+
+	proxy := newTestProxy(t, upstream.URL, t.TempDir())
+	path := "/v2/library/tiny/blobs/" + digest
+	begin := make(chan struct{})
+	responses := make(chan *httptest.ResponseRecorder, clients)
+	var wait sync.WaitGroup
+	for client := 0; client < clients; client++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-begin
+			responses <- performRequest(proxy, http.MethodGet, path, "")
+		}()
+	}
+	close(begin)
+	<-started
+	close(release)
+	wait.Wait()
+	close(responses)
+
+	for response := range responses {
+		if response.Code != http.StatusOK || response.Body.String() != string(body) {
+			t.Fatalf("response: status=%d body=%q", response.Code, response.Body.String())
+		}
+	}
+	if getRequests.Load() != 1 {
+		t.Fatalf("upstream GET requests = %d", getRequests.Load())
+	}
+	if headRequests.Load() != clients-1 {
+		t.Fatalf("upstream HEAD requests = %d", headRequests.Load())
+	}
+	snapshot := proxy.Snapshot()
+	if snapshot.CacheMisses != 1 || snapshot.CacheHits != clients-1 || snapshot.CacheObjects != 1 {
+		t.Fatalf("snapshot = %#v", snapshot)
 	}
 }
 

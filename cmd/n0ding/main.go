@@ -57,6 +57,7 @@ func run() error {
 	defer stop()
 
 	errCh := make(chan error, 1)
+	go handler.RunMaintenance(ctx)
 	go func() {
 		logger.Info("server starting", "listen", cfg.Server.Listen, "version", version)
 		errCh <- server.ListenAndServe()

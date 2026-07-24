@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -117,13 +116,14 @@ func (p *Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	cacheableRequest := cacheResource && !rangeRequest
 	key := p.cacheKey(target, request.Header.Get("Accept"))
 
-	if cacheableRequest && request.Header.Get("Authorization") != "" {
+	if cacheableRequest {
 		if entry, found := p.lookup(key, p.cacheTTL(kind, requestedDigest)); found {
 			if p.authorizeCacheHit(request, target, entry.Metadata.ContentDigest) {
 				p.stats.hits.Add(1)
 				p.serveHit(writer, request, entry)
 				return
 			}
+			_ = entry.Close()
 		}
 
 		unlock := p.locks.lock(key)
@@ -134,6 +134,7 @@ func (p *Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 				p.serveHit(writer, request, entry)
 				return
 			}
+			_ = entry.Close()
 		}
 		p.stats.misses.Add(1)
 	}
@@ -225,6 +226,7 @@ func (p *Proxy) cacheTTL(kind, requestedDigest string) time.Duration {
 }
 
 func (p *Proxy) serveHit(writer http.ResponseWriter, request *http.Request, entry cache.Entry) {
+	defer entry.Close()
 	copyHeader(writer.Header(), entry.Metadata.Header)
 	writer.Header().Set("X-N0ding-Cache", "HIT")
 	writer.Header().Set("Age", strconv.FormatInt(int64(time.Since(entry.Metadata.StoredAt).Seconds()), 10))
@@ -237,19 +239,11 @@ func (p *Proxy) serveHit(writer http.ResponseWriter, request *http.Request, entr
 		return
 	}
 
-	file, err := os.Open(entry.BodyPath)
-	if err != nil {
-		p.stats.errors.Add(1)
-		p.logger.Error("open cached OCI body failed", "repository", p.name, "error", err)
-		return
-	}
-	defer file.Close()
-
-	var source io.Reader = file
+	var source io.Reader = entry.Body
 	var verifier hash.Hash
 	if entry.Metadata.ContentDigest != "" {
 		verifier = sha256.New()
-		source = io.TeeReader(file, verifier)
+		source = io.TeeReader(entry.Body, verifier)
 	}
 	if _, err := io.Copy(writer, source); err != nil {
 		p.logger.Debug("send cached OCI body failed", "repository", p.name, "error", err)

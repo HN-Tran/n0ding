@@ -1,81 +1,51 @@
-# Spike scorecard
+# MVP readiness scorecard
 
-Date opened: 2026-07-24  
-Decision date: 2026-07-24
+Assessment date: 2026-07-25
+Target: narrow, read-only npm + OCI pull-through cache
 
-## Go criteria
+## Scope guard
 
-| Criterion | Target | Current evidence | Result |
-|---|---|---|---|
-| Standard client proxy is stable | npm or OCI | npm 11.16 scoped/lockfile installs pass; Docker Engine 29.6.2 pulled three images before and after restart with matching digests | Pass |
-| Local setup time | Under 10 minutes | One `docker compose up --build -d` command, but no formal clean-host timing | Unknown |
-| Two ecosystems | One configuration | npm at `/npm/` and OCI at `/v2/` use one binary, config, storage abstraction, and status API | Pass for spike |
-| Cache/storage visibility | Visible without filesystem access | Dashboard, JSON status, Prometheus metrics | Pass for spike |
-| Private publish feasibility | One ecosystem | Deliberately not analyzed in this pull-only spike | Unknown / deferred |
-| Lighter than Nexus | Qualitative operator test | Two ecosystems remain one process, one config, one volume, no database | Pass for spike; revisit after auth/retention |
-
-## Kill signals
-
-- Standard npm clients require undocumented workarounds.
-- Metadata rewriting breaks lockfiles, integrity checks, or scoped packages.
-- Cache correctness requires package-specific exceptions.
-- The OCI experiment forces a second incompatible operating model.
-- Private publishing cannot fit behind the same simple configuration and auth
-  boundary.
-- Setup or recovery becomes more complex than the tools n0ding is meant to
-  replace.
-
-## Week 1 work
-
-- [x] Repository structure
-- [x] Go runtime decision
-- [x] Persistent HTTP cache
-- [x] npm metadata and tarball proxy behavior
-- [x] TOML configuration
-- [x] Minimal status UI and metrics
-- [x] Docker Compose quickstart
-- [x] Real npm CLI end-to-end test
-- [x] Scoped package and lockfile tests
-
-## Week 2 gate
-
-- [ ] Measure clean setup time
-- [x] Stabilize tested npm scoped-package, lockfile, and integrity paths
-- [x] Analyze OCI `/v2/` pull/auth flow
-- [x] Implement and test OCI manifest/blob pull-through caching
-- [x] Verify a second pull with a clean Docker daemon after n0ding restart
-- [ ] Add lazy retention cleanup or document the required storage redesign
-- [x] Test interrupted/range behavior with Docker
-- [ ] Test Podman (client unavailable on the test host)
-- [ ] Assess private npm publish path (deferred; no publish work in this spike)
-- [x] Record go, cut, or kill decision
-
-## Compatibility-hardening gate
-
-| Check | Evidence | Result |
+| Capability | MVP decision | Result |
 |---|---|---|
-| npm scoped metadata | `npm view @types/node@22.10.0` through n0ding returned `22.10.0` | Pass |
-| npm lockfile install | Two clean-client `npm ci` runs installed 3 packages; lockfile SHA-256 stayed unchanged | Pass |
-| npm tarball integrity | npm 11.16.0 accepted all three lockfile SHA-512 integrity values | Pass |
-| npm persisted cache | First run 0 hits/5 misses; second run after n0ding restart 5 hits/0 misses | Pass |
-| OCI image breadth | `alpine:3.20`, `nginx:1.27-alpine`, and multi-arch `busybox:1.36` pulled | Pass |
-| OCI restart persistence | Both n0ding and Docker daemon were replaced; 30 objects and 27,820,024 bytes persisted | Pass |
-| OCI digest integrity | All three repo digests matched before/after restart; normal pulls had zero errors | Pass |
-| OCI object coverage | 3 indexes, 6 manifests, 6 referenced configs, and 15 referenced layers were present | Pass |
-| Normal Docker Range use | Six normal pulls recorded 0 Range requests | Pass: behavior determined |
-| Interrupted Docker resume | Controlled short read retried successfully; retry recorded 0 Range requests | Pass: behavior determined |
-| Explicit Range handling | Automated upstream test verifies forwarding `Range`, `206`, and `Content-Range` without partial caching | Pass |
-| Podman pull | `podman version` was not available | Unknown |
-| Crash-temp cleanup | Forced kill left 7 `.body-*` files | Fail / known limitation |
+| npm proxy/cache | Included | Pass |
+| OCI pull-through cache | Included | Pass |
+| Local filesystem storage | Included | Pass |
+| Age-based retention and stale-temp cleanup | Included | Pass |
+| JSON status, health, and metrics | Existing operational surface retained | Pass |
+| UI work | No new work | Pass |
+| Client auth, users, or RBAC | Excluded | Pass |
+| Private publish | Excluded | Pass |
+| PyPI or other ecosystems | Excluded | Pass |
+| Database or new Go dependencies | Excluded | Pass |
 
-## Final verification
+## Readiness gates
+
+| Gate | Evidence | Result |
+|---|---|---|
+| One binary / one config | Go binary, one TOML file, one `/data` volume | Pass |
+| Startup temp cleanup | Old `.body-*` and `.metadata-*` files removed; recent files retained | Pass |
+| Retention implementation | Configurable `max_age`; startup and periodic GC | Pass |
+| Safe GC deletion | Only valid, size-matched `.json`/`.body` pairs are removed | Pass |
+| Active writes protected | Runtime GC ignores every temp file; final commits and GC are store-synchronized | Pass |
+| npm same-key concurrency | 8 simultaneous requests, 1 upstream body fetch, 1 complete object | Pass |
+| OCI same-key concurrency | 8 simultaneous requests, 1 upstream body fetch, 7 upstream-validated cache hits | Pass |
+| Duplicate upstream policy | OCI per-client `HEAD`, different `Accept` keys, and cross-process fetches documented | Pass |
+| Compose quickstart | Build, start, health, stop, and volume-preservation guidance | Pass |
+| Config reference | Every supported key, default, and TTL/retention distinction documented | Pass |
+| TLS guidance | Caddy/nginx examples, public URL rule, private-CA and insecure-registry boundary | Pass |
+| Backup/restore | Quiesced backup and restore-to-new-volume workflow documented | Pass |
+| Known limitations | Offline, auth, publish, Podman, Range, quota, and single-process limits documented | Pass |
+| Podman compatibility | Client unavailable on the test host | Unknown, non-blocking |
+| Live restore drill | Procedure documented but not executed in this hardening task | Unknown, pre-stable follow-up |
+
+## Automated and build validation
 
 ```powershell
 go test ./...
 go vet ./...
 go build -trimpath -o dist\n0ding.exe ./cmd/n0ding
 .\dist\n0ding.exe -config config\n0ding.local.toml -check-config
-docker build --tag n0ding:compat-spike .
+docker build --tag n0ding:mvp-hardening .
 docker compose config --quiet
 ```
 
@@ -83,64 +53,87 @@ docker compose config --quiet
 |---|---|
 | All Go tests | Pass |
 | `go vet ./...` | Pass |
-| Windows binary build | Pass, 13,170,176 bytes |
+| Windows binary | Pass, 13,198,336 bytes |
 | Config validation | Pass |
 | Container build, including tests | Pass |
 | Compose config validation | Pass |
-| New dependencies | None |
-| UI/auth/publish/RBAC/new ecosystem changes | None |
+| Third-party Go dependencies | None |
 
-## OCI gate evidence
+## Real npm revalidation
 
-Exact core commands:
+Client: Node.js 24.18.0, npm 11.16.0.
 
-```powershell
-docker exec n0ding-oci-spike-dind docker pull --platform linux/amd64 `
-  n0ding:8080/library/alpine:3.20
-docker exec n0ding-oci-spike-dind docker image inspect `
-  n0ding:8080/library/alpine:3.20 --format '{{index .RepoDigests 0}}'
-docker rm --force n0ding-oci-spike-dind
-docker restart n0ding-oci-spike-server
-docker run --detach --privileged --name n0ding-oci-spike-dind `
-  --network n0ding-oci-spike docker:29-dind `
-  --insecure-registry=n0ding:8080
-docker exec n0ding-oci-spike-dind docker pull --platform linux/amd64 `
-  n0ding:8080/library/alpine:3.20
-```
+The committed `testdata/npm-compat` lockfile was installed twice through
+n0ding. Each run used a separate project directory and empty npm client cache;
+n0ding was restarted between runs.
 
-Measured hardening results:
-
-| Measurement | First clean client | Second clean client after both restarts |
+| Measurement | First run | Second run after restart |
 |---|---:|---:|
-| Images with matching repo digest | 3/3 | 3/3 |
-| Cumulative cache hits | 0 | 30 |
-| Cumulative cache misses | 33 | 3 |
-| Normal-pull digest/cache errors | 0 | 0 |
+| `npm view @types/node@22.10.0` | `22.10.0` | `22.10.0` |
+| Packages installed by `npm ci` | 3 | 3 |
+| Cache hits | 0 | 5 |
+| Cache misses | 5 | 0 |
+| Errors | 0 | 0 |
+| Complete objects | 5 | 5 |
+| Storage bytes | 13,956,353 | 13,956,353 |
+
+Result: scoped metadata, lockfile resolution, SHA-512 tarball integrity, local
+cache persistence, and startup maintenance coexist correctly.
+
+## Real OCI revalidation
+
+Client: Docker Engine 29.6.2 in two separate `docker:29-dind` containers.
+Platform: `linux/amd64`.
+
+| Image | Repo digest |
+|---|---|
+| `alpine:3.20` | `sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc` |
+| `nginx:1.27-alpine` | `sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10` |
+| `busybox:1.36` | `sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662` |
+
+All images were pulled through an empty n0ding cache. Both n0ding and the
+Docker daemon were then replaced while the n0ding volume was retained, and all
+three pulls were repeated.
+
+| Measurement | First clean daemon | Second clean daemon after n0ding restart |
+|---|---:|---:|
+| Matching repo digests | 3/3 | 3/3 |
+| Cumulative hits | 0 | 30 |
+| Cumulative misses | 39 | 9 |
+| Errors | 0 | 0 |
 | Range requests | 0 | 0 |
-| Stored objects | 30 | 30 |
-| Stored bytes | 27,820,024 | 27,820,024 |
+| Complete objects | 30 | 30 |
+| Storage bytes | 27,820,024 | 27,820,024 |
 
-The full reproducible setup, complete digest, and cleanup context are in the
-[compatibility matrix](compatibility.md#oci-pull-through-spike).
+The miss counter now includes cacheable unauthenticated and `HEAD` request
+variants. Object and byte counts show that the second run did not add body
+objects.
 
-## Current decision
+## Accepted MVP limitations
 
-**Go: n0ding is ready to become a narrowly scoped MVP project.** The
-compatibility-hardening spike passed for real npm and Docker clients without a
-database, sidecar, second configuration format, or protocol-specific storage
-service.
+- n0ding is not an offline mirror; OCI hits require an upstream
+  authorization/digest `HEAD`.
+- There is no private publish support.
+- There is no n0ding client auth, user management, or RBAC beyond forwarding
+  the upstream auth required for OCI pulls.
+- Podman is untested.
+- Range requests are proxied but partial responses are not cached.
+- Retention is maximum age from commit, not LRU or a strict maximum size.
+- A cache directory supports one n0ding process; there is no distributed lock.
+- Restore instructions have not yet completed a separate disaster-recovery
+  drill.
 
-The smallest next MVP is a read-only npm plus OCI pull-through cache:
+## Release-readiness verdict
 
-- one binary and one TOML file
-- local filesystem storage
-- standard npm and Docker clients
-- existing JSON status and metrics
-- retention, crash-temp scavenging, TLS deployment guidance, and an explicit
-  compatibility matrix
+**Ready for a narrow `v0.1.0` MVP preview.**
 
-Do not add PyPI, private publish, UI, auth, or RBAC in that scope. Before PyPI
-or private publish, the project still needs retention/garbage collection,
-startup cleanup for orphaned temporary files, private-upstream auth analysis,
-TLS and supply-chain threat documentation, concurrency/cancellation semantics,
-and protocol-specific compatibility tests. Podman remains unknown.
+The read-only npm + OCI core now has real-client compatibility, persisted cache
+reuse, digest/integrity validation, startup cleanup, bounded age-based
+retention, same-key request coalescing, and sufficient operating
+documentation. No required MVP gate failed.
+
+This is not yet a stable production supply-chain release. Before calling it
+stable, run a long-duration retention soak, execute a backup/restore drill,
+verify a real TLS deployment, test Podman, and deepen private-upstream auth
+coverage. Do not add PyPI, publishing, UI work, users, or RBAC before those
+operational gates are closed.

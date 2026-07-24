@@ -7,18 +7,18 @@ implicitly supported.
 |---|---|---|---|---|
 | npm | npm 11.16.0 | package metadata | Verified 2026-07-24 | Two clean-cache `npm view is-number version` runs; second served from n0ding |
 | npm | npm 11.16.0 | tarball download | Verified 2026-07-24 | Two clean-cache `npm pack is-number@7.0.0` runs; integrity accepted and second served from n0ding |
-| npm | npm 11.16.0 | scoped package | Verified 2026-07-24 | `npm view @types/node@22.10.0` and installation through n0ding succeeded |
-| npm | npm 11.16.0 | install with lockfile and SRI | Verified 2026-07-24 | Two clean-client `npm ci` runs accepted all SHA-512 integrity values; second run was 5/5 cache hits |
-| npm | npm CLI | private publish | Not implemented | Post-spike gate |
-| OCI | Docker Engine 29.6.2 | three `linux/amd64` image pulls | Verified 2026-07-24 | `alpine:3.20`, `nginx:1.27-alpine`, and `busybox:1.36` pulled before and after both services restarted |
-| OCI | Docker Engine 29.6.2 | multi-arch index selection | Verified 2026-07-24 | `busybox:1.36` returned an OCI index and Docker selected its `linux/amd64` manifest |
-| OCI | Docker Engine 29.6.2 | manifest/blob digest integrity | Verified 2026-07-24 | All three repo digests matched across clean daemons; normal pulls recorded zero errors |
-| OCI | Docker Engine 29.6.2 | persistent local cache | Verified 2026-07-24 | 30 objects / 27,820,024 bytes survived n0ding and Docker-daemon replacement; second run produced 30 hits |
-| OCI | Docker Engine 29.6.2 | Range/resume | Partially verified 2026-07-24 | No Range header on normal or interrupted-pull retry; explicit Range pass-through is covered by an automated 206 test |
+| npm | npm 11.16.0 | scoped package | Revalidated 2026-07-25 | `npm view @types/node@22.10.0` and installation through n0ding succeeded |
+| npm | npm 11.16.0 | install with lockfile and SRI | Revalidated 2026-07-25 | Two clean-client `npm ci` runs accepted all SHA-512 integrity values; second run was 5/5 cache hits |
+| npm | npm CLI | private publish | Not implemented | Excluded from the read-only MVP |
+| OCI | Docker Engine 29.6.2 | three `linux/amd64` image pulls | Revalidated 2026-07-25 | `alpine:3.20`, `nginx:1.27-alpine`, and `busybox:1.36` pulled before and after both services restarted |
+| OCI | Docker Engine 29.6.2 | multi-arch index selection | Revalidated 2026-07-25 | `busybox:1.36` returned an OCI index and Docker selected its `linux/amd64` manifest |
+| OCI | Docker Engine 29.6.2 | manifest/blob digest integrity | Revalidated 2026-07-25 | All three repo digests matched across clean daemons; normal pulls recorded zero errors |
+| OCI | Docker Engine 29.6.2 | persistent local cache | Revalidated 2026-07-25 | 30 objects / 27,820,024 bytes survived n0ding and Docker-daemon replacement; second run produced 30 hits |
+| OCI | Docker Engine 29.6.2 | Range/resume | Revalidated 2026-07-25 | No Range header on normal or interrupted-pull retry; explicit Range pass-through is covered by an automated 206 test |
 | OCI | Podman | image pull | Unknown | `podman version` was unavailable on the Windows test host |
 | OCI | Docker/Podman | private registry pull | Not verified | Auth/security follow-up |
 | OCI | Docker/Podman | image push | Not implemented | Explicit non-goal for this spike |
-| PyPI | pip/uv | package install | Not implemented | After npm/OCI gate |
+| PyPI | pip/uv | package install | Not implemented | Excluded from the read-only MVP |
 
 Automated tests also exercise the same HTTP behavior against an in-process
 upstream. The real-client check used Node.js 24.18.0 LTS with npm 11.16.0 and
@@ -350,3 +350,78 @@ docker network rm n0ding-oci-spike
 docker volume rm n0ding-oci-spike-data
 docker image rm docker:29-dind n0ding:oci-spike
 ```
+
+## MVP hardening revalidation
+
+Revalidated 2026-07-25 after adding startup cleanup, age-based GC, and
+store-level concurrency synchronization.
+
+### npm
+
+Core commands:
+
+```powershell
+& $npm view "@types/node@22.10.0" version `
+  --registry http://127.0.0.1:18080/npm/ `
+  --cache .tmp\npm-mvp-cache1 --prefer-online
+& $npm ci --ignore-scripts --no-audit --no-fund `
+  --registry http://127.0.0.1:18080/npm/ `
+  --cache .tmp\npm-mvp-cache1 --prefer-online
+
+docker restart n0ding-mvp-server
+
+# Repeat from a copied fixture and a separate empty npm cache:
+& $npm view "@types/node@22.10.0" version `
+  --registry http://127.0.0.1:18080/npm/ `
+  --cache .tmp\npm-mvp-cache2 --prefer-online
+& $npm ci --ignore-scripts --no-audit --no-fund `
+  --registry http://127.0.0.1:18080/npm/ `
+  --cache .tmp\npm-mvp-cache2 --prefer-online
+```
+
+| Measurement | First run | Second run after restart |
+|---|---:|---:|
+| Scoped version | `22.10.0` | `22.10.0` |
+| Installed packages | 3 | 3 |
+| Hits / misses | 0 / 5 | 5 / 0 |
+| Errors | 0 | 0 |
+| Objects / bytes | 5 / 13,956,353 | 5 / 13,956,353 |
+
+### OCI
+
+Core commands:
+
+```powershell
+$images = @(
+  "n0ding:8080/library/alpine:3.20",
+  "n0ding:8080/library/nginx:1.27-alpine",
+  "n0ding:8080/library/busybox:1.36"
+)
+foreach ($image in $images) {
+  docker exec n0ding-mvp-dind docker pull --platform linux/amd64 $image
+  docker exec n0ding-mvp-dind docker image inspect $image `
+    --format '{{index .RepoDigests 0}}'
+}
+
+docker rm --force n0ding-mvp-dind n0ding-mvp-server
+# Recreate both containers with the existing n0ding-mvp-data volume.
+# Repeat the same pull and inspect loop.
+```
+
+| Measurement | First clean daemon | Second clean daemon after both restarts |
+|---|---:|---:|
+| Matching digests | 3/3 | 3/3 |
+| Hits / misses | 0 / 39 | 30 / 9 |
+| Errors / Range | 0 / 0 | 0 / 0 |
+| Objects / bytes | 30 / 27,820,024 | 30 / 27,820,024 |
+
+Digests:
+
+```text
+alpine:3.20       sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+nginx:1.27-alpine sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+busybox:1.36      sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+```
+
+The revalidation environment was removed after the measurement. Podman remains
+unavailable on this host.

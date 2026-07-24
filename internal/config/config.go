@@ -40,7 +40,10 @@ func (s Server) LogLevel() slog.Level {
 }
 
 type Storage struct {
-	Path string
+	Path         string
+	MaxAge       time.Duration
+	GCInterval   time.Duration
+	StaleTempAge time.Duration
 }
 
 type Repository struct {
@@ -76,7 +79,12 @@ func Parse(reader io.Reader) (Config, error) {
 			PublicBaseURL: "http://localhost:8080",
 			Log:           "info",
 		},
-		Storage: Storage{Path: "./data"},
+		Storage: Storage{
+			Path:         "./data",
+			MaxAge:       30 * 24 * time.Hour,
+			GCInterval:   time.Hour,
+			StaleTempAge: time.Hour,
+		},
 	}
 
 	var section string
@@ -130,10 +138,27 @@ func Parse(reader io.Reader) (Config, error) {
 				return Config{}, fmt.Errorf("line %d: unknown server key %q", lineNumber, key)
 			}
 		case section == "storage":
-			if key != "path" {
+			switch key {
+			case "path":
+				cfg.Storage.Path = value
+			case "max_age":
+				cfg.Storage.MaxAge, err = time.ParseDuration(value)
+				if err != nil {
+					return Config{}, fmt.Errorf("line %d: invalid max_age: %w", lineNumber, err)
+				}
+			case "gc_interval":
+				cfg.Storage.GCInterval, err = time.ParseDuration(value)
+				if err != nil {
+					return Config{}, fmt.Errorf("line %d: invalid gc_interval: %w", lineNumber, err)
+				}
+			case "stale_temp_age":
+				cfg.Storage.StaleTempAge, err = time.ParseDuration(value)
+				if err != nil {
+					return Config{}, fmt.Errorf("line %d: invalid stale_temp_age: %w", lineNumber, err)
+				}
+			default:
 				return Config{}, fmt.Errorf("line %d: unknown storage key %q", lineNumber, key)
 			}
-			cfg.Storage.Path = value
 		case current != nil:
 			switch key {
 			case "type":
@@ -181,6 +206,15 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.Storage.Path) == "" {
 		return errors.New("storage.path must not be empty")
+	}
+	if c.Storage.MaxAge <= 0 {
+		return errors.New("storage.max_age must be positive")
+	}
+	if c.Storage.GCInterval <= 0 {
+		return errors.New("storage.gc_interval must be positive")
+	}
+	if c.Storage.StaleTempAge <= 0 {
+		return errors.New("storage.stale_temp_age must be positive")
 	}
 	if len(c.Repositories) == 0 {
 		return errors.New("at least one repository is required")
