@@ -1,0 +1,9 @@
+{
+  "name": "n0ding-npm-compat-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@types/node": "22.10.0",
+    "is-number": "7.0.0"
+  }
+}

@@ -51,10 +51,11 @@ type Proxy struct {
 }
 
 type counters struct {
-	requests atomic.Uint64
-	hits     atomic.Uint64
-	misses   atomic.Uint64
-	errors   atomic.Uint64
+	requests      atomic.Uint64
+	hits          atomic.Uint64
+	misses        atomic.Uint64
+	errors        atomic.Uint64
+	rangeRequests atomic.Uint64
 }
 
 func New(options Options) (*Proxy, error) {
@@ -109,7 +110,11 @@ func (p *Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	kind, requestedDigest, cacheResource := classify(request.URL.Path)
-	cacheableRequest := cacheResource && request.Header.Get("Range") == ""
+	rangeRequest := request.Header.Get("Range") != ""
+	if rangeRequest {
+		p.stats.rangeRequests.Add(1)
+	}
+	cacheableRequest := cacheResource && !rangeRequest
 	key := p.cacheKey(target, request.Header.Get("Accept"))
 
 	if cacheableRequest && request.Header.Get("Authorization") != "" {
@@ -148,17 +153,18 @@ func (p *Proxy) Snapshot() repository.Snapshot {
 		p.logger.Warn("cache size scan failed", "repository", p.name, "error", err)
 	}
 	return repository.Snapshot{
-		Name:         p.name,
-		Type:         "oci",
-		Path:         p.path,
-		Upstream:     p.upstream.String(),
-		Requests:     p.stats.requests.Load(),
-		CacheHits:    hits,
-		CacheMisses:  misses,
-		Errors:       p.stats.errors.Load(),
-		HitRatio:     ratio,
-		StorageBytes: storageBytes,
-		CacheObjects: objects,
+		Name:          p.name,
+		Type:          "oci",
+		Path:          p.path,
+		Upstream:      p.upstream.String(),
+		Requests:      p.stats.requests.Load(),
+		CacheHits:     hits,
+		CacheMisses:   misses,
+		Errors:        p.stats.errors.Load(),
+		RangeRequests: p.stats.rangeRequests.Load(),
+		HitRatio:      ratio,
+		StorageBytes:  storageBytes,
+		CacheObjects:  objects,
 	}
 }
 

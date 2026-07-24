@@ -156,6 +156,58 @@ func TestBlobWithWrongDigestIsNotCached(t *testing.T) {
 	}
 }
 
+func TestBlobRangeRequestIsForwardedAndNotCached(t *testing.T) {
+	body := []byte("compressed OCI layer bytes")
+	digest := digestOf(body)
+	var requests atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests.Add(1)
+		if got := request.Header.Get("Range"); got != "bytes=11-" {
+			t.Errorf("Range = %q", got)
+		}
+		writer.Header().Set("Content-Type", "application/octet-stream")
+		writer.Header().Set("Content-Range", "bytes 11-25/26")
+		writer.Header().Set("Docker-Content-Digest", digest)
+		writer.WriteHeader(http.StatusPartialContent)
+		_, _ = writer.Write(body[11:])
+	}))
+	defer upstream.Close()
+
+	proxy := newTestProxy(t, upstream.URL, t.TempDir())
+	path := "/v2/library/tiny/blobs/" + digest
+	for attempt := 0; attempt < 2; attempt++ {
+		request := httptest.NewRequest(http.MethodGet, "http://n0ding.test"+path, nil)
+		request.Header.Set("Authorization", "Bearer token")
+		request.Header.Set("Range", "bytes=11-")
+		response := httptest.NewRecorder()
+		proxy.ServeHTTP(response, request)
+
+		if response.Code != http.StatusPartialContent {
+			t.Fatalf("attempt %d status = %d", attempt+1, response.Code)
+		}
+		if response.Header().Get("Content-Range") != "bytes 11-25/26" {
+			t.Fatalf("attempt %d Content-Range = %q", attempt+1, response.Header().Get("Content-Range"))
+		}
+		if response.Header().Get("X-N0ding-Cache") != "MISS" {
+			t.Fatalf("attempt %d cache result = %q", attempt+1, response.Header().Get("X-N0ding-Cache"))
+		}
+		if response.Body.String() != string(body[11:]) {
+			t.Fatalf("attempt %d body = %q", attempt+1, response.Body.String())
+		}
+	}
+
+	snapshot := proxy.Snapshot()
+	if requests.Load() != 2 {
+		t.Fatalf("upstream requests = %d", requests.Load())
+	}
+	if snapshot.RangeRequests != 2 {
+		t.Fatalf("range requests = %d", snapshot.RangeRequests)
+	}
+	if snapshot.CacheObjects != 0 {
+		t.Fatalf("cache objects = %d", snapshot.CacheObjects)
+	}
+}
+
 func TestChangedTagDigestRefreshesCachedManifest(t *testing.T) {
 	firstBody := []byte(`{"schemaVersion":2,"generation":1}`)
 	secondBody := []byte(`{"schemaVersion":2,"generation":2}`)
