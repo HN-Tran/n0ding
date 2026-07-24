@@ -1,8 +1,14 @@
 /data/
 /dist/
+/_coverage/
+/n0ding
 /.idea/
 /.vscode/
 /.tmp/
 *.exe
 *.log
+*.prof
+*.test
+.DS_Store
 .env
+Thumbs.db

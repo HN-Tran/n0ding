@@ -8,15 +8,29 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
       - run: go test -race ./...
       - run: go vet ./...
-      - run: go build ./cmd/n0ding
+      - run: go build -trimpath -ldflags="-s -w -X main.version=ci" -o dist/n0ding ./cmd/n0ding
+      - run: ./dist/n0ding -config config/n0ding.local.toml -check-config
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - run: docker compose config --quiet
+      - run: docker build --build-arg VERSION=ci --tag n0ding:ci .

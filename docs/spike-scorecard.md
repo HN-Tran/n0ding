@@ -41,11 +41,13 @@ Target: narrow, read-only npm + OCI pull-through cache
 ## Automated and build validation
 
 ```powershell
-go test ./...
+go test -count=1 ./...
 go vet ./...
-go build -trimpath -o dist\n0ding.exe ./cmd/n0ding
+go build -trimpath -ldflags="-s -w -X main.version=v0.1.0" `
+  -o dist\n0ding.exe ./cmd/n0ding
 .\dist\n0ding.exe -config config\n0ding.local.toml -check-config
-docker build --tag n0ding:mvp-hardening .
+.\dist\n0ding.exe -config config\n0ding.example.toml -check-config
+docker build --build-arg VERSION=v0.1.0 --tag n0ding:v0.1.0-check .
 docker compose config --quiet
 ```
 
@@ -53,11 +55,16 @@ docker compose config --quiet
 |---|---|
 | All Go tests | Pass |
 | `go vet ./...` | Pass |
-| Windows binary | Pass, 13,198,336 bytes |
-| Config validation | Pass |
+| Windows release-shaped binary | Pass, 9,140,736 bytes |
+| Container, local, and example config validation | Pass |
 | Container build, including tests | Pass |
 | Compose config validation | Pass |
+| Isolated Compose start, health, and status | Pass, 2 repositories |
 | Third-party Go dependencies | None |
+
+Release-packaging revalidation used Go 1.24.13, Docker Engine 29.5.3, and Docker
+Compose 5.1.4 on 2026-07-25. The container config was validated with
+`N0DING_PUBLIC_URL=http://localhost:8080`, matching the Compose default.
 
 ## Real npm revalidation
 
@@ -130,10 +137,14 @@ objects.
 The read-only npm + OCI core now has real-client compatibility, persisted cache
 reuse, digest/integrity validation, startup cleanup, bounded age-based
 retention, same-key request coalescing, and sufficient operating
-documentation. No required MVP gate failed.
+documentation. Release packaging now includes an explicit preview README,
+changelog, example configuration, architecture and troubleshooting documents,
+Apache-2.0 licensing, contribution and security policies, and CI for Go and
+container gates. No required technical MVP gate failed.
 
-This is not yet a stable production supply-chain release. Before calling it
-stable, run a long-duration retention soak, execute a backup/restore drill,
-verify a real TLS deployment, test Podman, and deepen private-upstream auth
-coverage. Do not add PyPI, publishing, UI work, users, or RBAC before those
-operational gates are closed.
+This is not yet a stable production supply-chain release. Before creating the
+tag, confirm a green CI run on the exact release commit and a monitored private
+vulnerability-reporting path. The exact v0.1.0 publication steps and v0.2.0
+reliability gates are in [the release checklist](release-checklist.md). Do not
+add PyPI, publishing, UI work, users, or RBAC before those operational gates
+are closed.

@@ -1,50 +1,94 @@
 # n0ding
 
-> A homelab-native package hub.
+> n0ding is a small, self-hosted, read-only pull-through cache for npm and OCI
+> artifacts, built for homelabs and small technical teams.
 
-n0ding is a lightweight, read-only pull-through cache for package registries.
-It is config-first, Docker-friendly, and deliberately smaller than an
-enterprise artifact manager.
+> [!WARNING]
+> **v0.1.0 is a preview release.** It is intended for evaluation on trusted
+> networks. It has not completed the security, recovery, or long-running
+> reliability work required for a production supply-chain service.
 
-The narrow MVP supports **npm and OCI read-through caching**:
+## What n0ding is
 
-- standard npm registry requests under `/npm/`
-- persistent metadata and tarball caching
-- metadata rewriting so tarball downloads also pass through n0ding
-- standard OCI Distribution pull requests under `/v2/`
-- local manifest, image-index, config, and layer caching
-- SHA-256 verification before OCI objects are committed to the cache
-- upstream authorization checks before authenticated OCI cache hits
-- cache hit, object, and storage statistics
-- startup cleanup for stale temporary files
-- periodic age-based retention of complete cache objects
-- in-process coalescing of concurrent requests for the same object
-- Prometheus-compatible metrics
-- generated npm and Docker setup snippets
+- One Go binary with one TOML configuration file.
+- A persistent local filesystem cache for npm metadata/tarballs and OCI
+  manifests, indexes, configs, and blobs.
+- Compatible with standard npm and Docker/OCI pull clients; no client plugin is
+  required.
+- Config-first, Docker Compose-friendly, observable through health, JSON status,
+  and Prometheus-compatible metrics endpoints.
+- Deliberately narrow: read-only npm and OCI are the complete v0.1.0 protocol
+  scope.
 
-This is not a private package registry or a production supply-chain security
-platform. Client authentication, private publishing, PyPI, RBAC, and S3 storage
-are deliberately outside the MVP.
+## What n0ding is not
 
-## Quickstart
+- Not an offline mirror: OCI cache hits still require an upstream
+  authorization/digest check.
+- Not a private registry and not a publishing destination.
+- Not an authentication, user-management, RBAC, scanning, signing, or policy
+  system.
+- Not a replacement for a production-grade artifact manager.
+- Not a supported PyPI, Maven, NuGet, Helm, or general artifact cache.
 
-Requirements: Docker with Compose. For local-only evaluation:
+## Quickstart with Docker Compose
+
+Requirements: Docker Engine or Docker Desktop with Compose.
+
+From the repository checkout:
 
 ```sh
+docker compose config --quiet
 docker compose up --build -d
 docker compose ps
 curl http://localhost:8080/healthz
+curl http://localhost:8080/api/v1/status
 ```
 
-Point npm at n0ding:
+The service listens on `http://localhost:8080` and stores its cache in the
+named `n0ding-data` volume. A normal `docker compose down` preserves that
+volume. Do not add `--volumes` unless you intentionally want to delete the
+cache.
+
+For a hostname or TLS reverse proxy, set `N0DING_PUBLIC_URL` before starting
+Compose. It must be the exact URL clients use:
+
+```sh
+N0DING_PUBLIC_URL=https://packages.example.com docker compose up --build -d
+```
+
+PowerShell:
+
+```powershell
+$env:N0DING_PUBLIC_URL = "https://packages.example.com"
+docker compose up --build -d
+```
+
+See the [operations guide](docs/operations.md) before exposing n0ding outside
+the local machine.
+
+## npm client setup
+
+For a project-local setup, create `.npmrc` next to `package.json`:
+
+```ini
+registry=http://localhost:8080/npm/
+```
+
+Or set the current user's npm registry:
 
 ```sh
 npm config set registry http://localhost:8080/npm/
-npm view @types/node version
 ```
 
-Run the request twice with separate npm client caches to distinguish the
-n0ding cache from npm's local cache:
+Then use npm normally:
+
+```sh
+npm view @types/node version
+npm ci
+```
+
+To verify n0ding rather than npm's own client cache, use two empty cache
+directories:
 
 ```sh
 npm view @types/node version --registry http://localhost:8080/npm/ \
@@ -53,65 +97,91 @@ npm view @types/node version --registry http://localhost:8080/npm/ \
   --cache .tmp/npm-cache-2 --prefer-online
 ```
 
-Responses expose `X-N0ding-Cache: MISS` or `HIT`. Runtime state is available at:
+n0ding rewrites npm tarball URLs to its configured `public_base_url`, so that
+value must be client-reachable. Responses expose `X-N0ding-Cache: MISS` or
+`HIT`.
 
-- `GET /api/v1/status`
-- `GET /api/v1/repositories/npm/setup`
-- `GET /metrics`
-- `GET /healthz`
+## OCI / Docker client setup
 
-For a Docker Engine configured to allow the local HTTP registry, pull through
-the OCI adapter with:
+Docker expects registries to use trusted TLS. For local evaluation only, add
+`localhost:8080` to the Docker daemon's `insecure-registries` list and restart
+the daemon. On Docker Desktop this setting is under **Settings → Docker
+Engine**:
+
+```json
+{
+  "insecure-registries": ["localhost:8080"]
+}
+```
+
+Pull a Docker Hub image through n0ding:
 
 ```sh
 docker pull localhost:8080/library/alpine:3.20
 ```
 
-Docker treats non-TLS registries as insecure. Keep that exception local to a
-development daemon and use TLS for every shared deployment. See the
-[operations guide](docs/operations.md) for reverse-proxy, backup, and restore
-guidance. Reproducible real-client results are in the
-[compatibility matrix](docs/compatibility.md).
+Official Docker Hub images retain the `library/` namespace. For shared
+deployments, use a trusted TLS reverse proxy instead of an insecure-registry
+exception. Detailed Caddy, nginx, and private-CA guidance is in
+[docs/operations.md](docs/operations.md).
 
-To stop the service without deleting cached data:
+## Configuration
+
+The container uses [`config/n0ding.toml`](config/n0ding.toml). A commented,
+copyable starting point is
+[`config/n0ding.example.toml`](config/n0ding.example.toml). Validate a config
+without starting the listener:
 
 ```sh
-docker compose down
+n0ding -config /etc/n0ding/n0ding.toml -check-config
 ```
 
-Do not add `--volumes` unless you intentionally want to delete the cache.
+The complete field and retention semantics are documented in the
+[configuration reference](docs/configuration.md).
 
-## Local development
+## Operational endpoints
 
-The service uses only the Go standard library.
+| Endpoint | Purpose |
+|---|---|
+| `GET /healthz` | Process health |
+| `GET /api/v1/status` | Version and repository/cache counters |
+| `GET /api/v1/repositories/npm/setup` | npm setup snippet |
+| `GET /api/v1/repositories/oci/setup` | Docker pull snippet |
+| `GET /metrics` | Prometheus-compatible counters |
+
+## Known limitations
+
+- n0ding is not an offline mirror.
+- There is no private publish support.
+- There is no n0ding client authentication, user management, or RBAC; only the
+  existing upstream credential handling is present.
+- Podman has not yet been tested.
+- Range requests are proxied, but partial responses are not cached.
+- Retention is based on maximum object age, not LRU or a strict byte quota.
+- Only one n0ding process may write to a cache directory.
+- Only local filesystem storage is supported.
+
+See [troubleshooting](docs/troubleshooting.md) and the
+[real-client compatibility evidence](docs/compatibility.md) for operational
+details.
+
+## Development
+
+n0ding uses the Go standard library only.
 
 ```sh
 go test ./...
+go vet ./...
+go build -trimpath -o dist/n0ding ./cmd/n0ding
 go run ./cmd/n0ding -config config/n0ding.local.toml
 ```
 
-Configuration uses a deliberately small TOML subset. Environment variables in
-string values are expanded. See the
-[configuration reference](docs/configuration.md) and
-[`config/n0ding.toml`](config/n0ding.toml).
+The [architecture](docs/architecture.md), [MVP readiness
+scorecard](docs/spike-scorecard.md), and [release
+checklist](docs/release-checklist.md) describe the current boundaries and
+evidence.
 
-## Security posture
+## Security and license
 
-- Client `Authorization` headers are not forwarded upstream by default.
-- Authenticated upstream responses are not shared through the cache when
-  authorization forwarding is enabled.
-- Cache writes are atomic and incomplete downloads are discarded.
-- Age-based GC deletes only complete body/metadata pairs and never temporary
-  writes.
-- Only `GET` and `HEAD` are accepted by both adapters.
-
-This does not make the spike production-ready. See
-[`SECURITY.md`](SECURITY.md) before exposing it outside a trusted network.
-
-## MVP scope
-
-The [MVP readiness scorecard](docs/spike-scorecard.md) records the release gate.
-The current scope remains read-only npm plus OCI. PyPI, publishing, user
-management, RBAC, and additional registry ecosystems must wait.
-
-Apache-2.0 licensed.
+Read [SECURITY.md](SECURITY.md) before deployment or disclosure. n0ding is
+licensed under [Apache-2.0](LICENSE).

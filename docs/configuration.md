@@ -4,6 +4,11 @@ n0ding reads one TOML file. The parser intentionally supports only the fields
 documented here. Unknown fields fail startup instead of being ignored.
 Environment variables are expanded inside string values.
 
+[`config/n0ding.example.toml`](../config/n0ding.example.toml) is a commented
+local starting point. The container uses
+[`config/n0ding.toml`](../config/n0ding.toml), where Compose supplies
+`N0DING_PUBLIC_URL`.
+
 ## Complete MVP example
 
 ```toml

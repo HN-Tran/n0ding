@@ -50,7 +50,7 @@ and blob `GET` responses are cached. Push methods remain disabled.
 - `internal/httpserver`: routing, status API, metrics, startup maintenance, and
   periodic GC scheduling.
 
-The spike intentionally uses no third-party Go packages.
+The v0.1.0 preview intentionally uses no third-party Go packages.
 
 ## Cache model
 
@@ -115,7 +115,7 @@ because there is no distributed lock.
 
 ## Trust boundaries
 
-The spike assumes a trusted local network. It does not authenticate clients.
+The preview assumes a trusted local network. It does not authenticate clients.
 Client authorization is not forwarded upstream unless explicitly enabled.
 When authorization forwarding is enabled for a request, that response is not
 read from or written to the shared cache.
@@ -146,7 +146,15 @@ These are MVP boundaries.
 
 ## Next architecture gate
 
-The next gate is release reliability, not protocol breadth: longer-running
-retention tests, restore drills, TLS deployment verification, private-upstream
-authorization analysis, and Podman compatibility. PyPI and private publishing
-remain outside the read-only MVP.
+The v0.2.0 gate is release reliability, not protocol breadth:
+
+1. complete a seven-day retention/concurrency soak;
+2. restore a stopped Compose cache into a fresh volume and revalidate npm and
+   OCI digests;
+3. verify npm, Docker, and Podman through a trusted TLS reverse proxy;
+4. test private-upstream authorization without persisting or sharing
+   credentials;
+5. turn the supported client matrix into a repeatable release suite.
+
+PyPI and private publishing remain outside the read-only architecture until
+those gates close and receive separate protocol/security designs.

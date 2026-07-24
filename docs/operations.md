@@ -4,6 +4,9 @@ The read-only MVP is one process, one configuration file, and one local
 filesystem cache. Run exactly one n0ding process against a cache directory;
 shared-volume multi-writer operation is unsupported.
 
+For failure symptoms and diagnostic commands, see
+[the troubleshooting guide](troubleshooting.md).
+
 ## Docker Compose quickstart
 
 For local evaluation:

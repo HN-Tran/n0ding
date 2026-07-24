@@ -1,0 +1,29 @@
+# Copy this file and adjust the client-visible URL and storage path.
+# n0ding expands environment variables inside string values.
+
+[server]
+listen = ":8080"
+public_base_url = "http://localhost:8080"
+log_level = "info"
+
+[storage]
+path = "./data"
+# Complete objects are removed this long after their cache commit.
+max_age = "720h"
+gc_interval = "1h"
+# Cache-created temporary writes older than this are removed at startup.
+stale_temp_age = "1h"
+
+[repository.npm]
+type = "npm"
+path = "/npm/"
+upstream = "https://registry.npmjs.org"
+ttl = "24h"
+forward_authorization = false
+
+[repository.oci]
+type = "oci"
+# Standard OCI/Docker clients require the Registry V2 path.
+path = "/v2/"
+upstream = "https://registry-1.docker.io"
+ttl = "1h"
