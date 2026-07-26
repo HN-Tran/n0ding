@@ -1,6 +1,6 @@
 # npm + OCI baseline scorecard
 
-Assessment date: 2026-07-25
+Assessment date: 2026-07-25; recovery addendum: 2026-07-26
 Target: narrow, read-only npm + OCI pull-through cache
 
 This is retained as historical technical evidence. The public-preview decision
@@ -37,10 +37,10 @@ was superseded on 2026-07-26 by the
 | Compose quickstart | Build, start, health, stop, and volume-preservation guidance | Pass |
 | Config reference | Every supported key, default, and TTL/retention distinction documented | Pass |
 | TLS guidance | Caddy/nginx examples, public URL rule, private-CA and insecure-registry boundary | Pass |
-| Backup/restore | Quiesced backup and restore-to-new-volume workflow documented | Pass |
+| Backup/restore | Stopped Compose cache+config archive restored to a new volume; npm SRI, OCI digest, identity checks, rollback, and canary scan passed | Pass |
 | Known limitations | Offline, auth, publish, Podman, Range, quota, and single-process limits documented | Pass |
 | Podman compatibility | Client unavailable on the test host | Unknown, non-blocking |
-| Live restore drill | Procedure documented but not executed in this hardening task | Unknown, pre-stable follow-up |
+| Stopped restore drill | Deterministic Compose drill runs locally and in CI; corrupt-object refetch covered | Pass |
 
 ## Automated and build validation
 
@@ -131,8 +131,8 @@ objects.
 - Range requests are proxied but partial responses are not cached.
 - Retention is maximum age from commit, not LRU or a strict maximum size.
 - A cache directory supports one n0ding process; there is no distributed lock.
-- Restore instructions have not yet completed a separate disaster-recovery
-  drill.
+- Cross-version restore compatibility and recovery of real private-upstream
+  output remain unproven.
 
 ## Baseline verdict
 

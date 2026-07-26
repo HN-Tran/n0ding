@@ -1,0 +1,23 @@
+[server]
+listen = ":8080"
+public_base_url = "${N0DING_PUBLIC_URL}"
+log_level = "info"
+
+[storage]
+path = "/data"
+max_age = "24h"
+gc_interval = "1h"
+stale_temp_age = "15m"
+
+[repository.npm]
+type = "npm"
+path = "/npm/"
+upstream = "http://fixture:9090/npm"
+ttl = "1h"
+forward_authorization = true
+
+[repository.oci]
+type = "oci"
+path = "/v2/"
+upstream = "http://fixture:9090"
+ttl = "1h"

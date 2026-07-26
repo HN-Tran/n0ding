@@ -92,12 +92,18 @@ revocation or token-lifetime evidence.
   process restarts, and disk-usage evidence.
 - [ ] Confirm no corrupt complete objects after forced client disconnects and
   process termination.
-- [ ] Back up a stopped Compose cache and config.
-- [ ] Restore into a fresh volume and revalidate npm lockfile integrity plus
+- [x] Back up a stopped Compose cache and config.
+- [x] Restore into a fresh volume and revalidate npm lockfile integrity plus
   recorded OCI digests.
-- [ ] Record restore duration, failure handling, and rollback procedure.
+- [x] Record restore duration, failure handling, and rollback procedure.
 - [ ] Decide whether age-only retention is sufficient for private use or a
   strict byte limit is required.
+
+The deterministic [stopped Compose backup/restore drill](backup-restore-drill.md)
+also proves restored identity checks, archive/restored-state canary scanning,
+rollback to the untouched source volume, and safe refetch of a deliberately
+truncated cache body. Forced-disconnect/process-termination behavior remains a
+separate soak gate.
 
 ## 4. Real-client and TLS compatibility
 

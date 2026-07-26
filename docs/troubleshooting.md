@@ -120,9 +120,19 @@ is acceptable.
 ## Restore validation fails
 
 Restoring into a non-empty live cache is unsupported. Restore a quiesced backup
-into a new empty volume, then validate health, one npm request, and one OCI
-pull. The cache format is not yet a stable cross-version API; when a preview
-restore is incompatible, discard the restored cache and repopulate it from the
-upstreams.
+into a new empty volume, then validate health/status, `npm ci` with a clean
+client cache, and an OCI digest.
 
-See the complete [backup and restore procedure](operations.md#backup-and-restore).
+Messages containing `decode cache metadata` or `cache body size mismatch` mean
+the restored object is invalid. It is not counted or served; n0ding attempts
+to fetch it again when requested. If the upstream is unavailable, the request
+cannot be repaired from that object.
+
+Keep the original volume untouched until validation completes. If extraction,
+required config, identity checks, or client integrity validation fails, stop
+the restored deployment and return to the original volume. The cache format is
+not yet a stable cross-version API; an incompatible restored cache may be
+discarded and repopulated.
+
+See the [operator procedure](operations.md#backup-and-restore) and the
+[deterministic stopped Compose drill](backup-restore-drill.md).

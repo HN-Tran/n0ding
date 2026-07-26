@@ -1,0 +1,12 @@
+# syntax=docker/dockerfile:1
+
+FROM golang:1.24-alpine AS build
+WORKDIR /src
+COPY fixture.go ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/fixture fixture.go
+
+FROM alpine:3.22
+COPY --from=build /out/fixture /usr/local/bin/n0ding-drill-fixture
+USER 65532:65532
+EXPOSE 9090
+ENTRYPOINT ["/usr/local/bin/n0ding-drill-fixture"]

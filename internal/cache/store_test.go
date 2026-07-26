@@ -2,11 +2,13 @@ package cache
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -249,5 +251,108 @@ func TestVerifiedStreamRejectsInvalidBody(t *testing.T) {
 	}
 	if _, found, lookupErr := store.Lookup("invalid", time.Hour); lookupErr != nil || found {
 		t.Fatalf("lookup after failed verification: found=%v err=%v", found, lookupErr)
+	}
+}
+
+func TestRestoredIncompleteOrCorruptObjectsAreNeverCountedAsComplete(t *testing.T) {
+	tests := []struct {
+		name          string
+		mutate        func(t *testing.T, bodyPath, metadataPath string)
+		wantLookupErr string
+	}{
+		{
+			name: "missing body is a safe miss",
+			mutate: func(t *testing.T, bodyPath, _ string) {
+				t.Helper()
+				if err := os.Remove(bodyPath); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "truncated body is rejected",
+			mutate: func(t *testing.T, bodyPath, _ string) {
+				t.Helper()
+				if err := os.WriteFile(bodyPath, []byte("x"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantLookupErr: "cache body size mismatch",
+		},
+		{
+			name: "malformed metadata is rejected",
+			mutate: func(t *testing.T, _, metadataPath string) {
+				t.Helper()
+				if err := os.WriteFile(metadataPath, []byte("{"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantLookupErr: "decode cache metadata",
+		},
+		{
+			name: "metadata size mismatch is rejected",
+			mutate: func(t *testing.T, _ string, metadataPath string) {
+				t.Helper()
+				data, err := os.ReadFile(metadataPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var metadata Metadata
+				if err := json.Unmarshal(data, &metadata); err != nil {
+					t.Fatal(err)
+				}
+				metadata.ContentBytes++
+				data, err = json.Marshal(metadata)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(metadataPath, data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantLookupErr: "cache body size mismatch",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.PutBytes(
+				"restored-object",
+				Metadata{Status: http.StatusOK},
+				[]byte("complete before backup"),
+			); err != nil {
+				t.Fatal(err)
+			}
+			bodyPath, metadataPath := store.paths("restored-object")
+			test.mutate(t, bodyPath, metadataPath)
+
+			bytes, objects, err := store.Size()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes != 0 || objects != 0 {
+				t.Fatalf("corrupt restored object counted as complete: bytes=%d objects=%d", bytes, objects)
+			}
+
+			entry, found, lookupErr := store.Lookup("restored-object", time.Hour)
+			if found {
+				_ = entry.Close()
+				t.Fatal("corrupt restored object was returned")
+			}
+			if test.wantLookupErr == "" {
+				if lookupErr != nil {
+					t.Fatalf("safe miss returned error: %v", lookupErr)
+				}
+				return
+			}
+			if lookupErr == nil || !strings.Contains(lookupErr.Error(), test.wantLookupErr) {
+				t.Fatalf("lookup error = %v, want substring %q", lookupErr, test.wantLookupErr)
+			}
+		})
 	}
 }

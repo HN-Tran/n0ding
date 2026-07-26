@@ -571,3 +571,45 @@ pause, expected signals, credential-canary scan, and cleanup are committed in
 [private-upstream-drill.md](private-upstream-drill.md). A future run must add
 dated provider/client evidence here without committing credentials or raw
 private artifacts.
+
+## Stopped Compose backup/restore drill
+
+Validated 2026-07-26 with the deterministic local fixture stack and
+`tools/backup-restore-drill.ps1`.
+
+The source n0ding service was stopped and verified not running before a single
+uncompressed archive captured the cache volume and exact config. The archive
+was restored into a new empty volume and a separate Compose project.
+
+| Measurement | Source before backup | Fresh restored volume |
+|---|---:|---:|
+| npm complete objects / bytes | 2 / 561 | 2 / 561 |
+| npm cache hits | 0 | 2 |
+| OCI complete objects / bytes | 1 / 246 | 1 / 246 |
+| OCI cache hits | 1 | 2 |
+| npm lockfile SHA-256 | `898aa0f9…1a91b61` | unchanged |
+| OCI manifest digest | `sha256:f20c4316…4967268` | unchanged |
+
+The post-restore npm run used a new `node:24-alpine` container and empty npm
+client cache. `npm ci` accepted the fixture tarball's SHA-512 integrity and did
+not modify the lockfile. Authorized OCI identities received digest-confirmed
+hits; a denied identity could not use the restored object. Authenticated npm A
+and B responses stayed distinct misses and the denied identity failed.
+
+Additional results:
+
+- backup and restore took 715 ms and 676 ms on Docker Engine 29.5.3 / Compose
+  5.1.4;
+- rollback restarted the untouched source volume and served the original OCI
+  digest as a hit;
+- a third restored volume had one npm body truncated to one byte; n0ding logged
+  `cache body size mismatch`, refetched it, and completed `npm ci`;
+- the 11,776-byte archive had only `data/` and `config/` members;
+- 63 archive, restored-state, metadata, config, status, metrics, log,
+  client-response/error, npm-output, and result files were scanned against
+  eight fake credential values with zero findings.
+
+This proves same-version fixture recovery, not cross-version cache-format
+compatibility or a backup containing real private artifacts. Exact procedure,
+failure semantics, and evidence paths are in
+[backup-restore-drill.md](backup-restore-drill.md).

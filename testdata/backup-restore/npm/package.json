@@ -1,0 +1,8 @@
+{
+  "name": "n0ding-backup-restore-client",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "n0ding-restore-fixture": "1.0.0"
+  }
+}

@@ -1,0 +1,42 @@
+services:
+  fixture:
+    build:
+      context: .
+      dockerfile: Dockerfile.fixture
+    image: ${N0DING_DRILL_FIXTURE_IMAGE:?set N0DING_DRILL_FIXTURE_IMAGE}
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/n0ding-drill-fixture", "-print-integrity"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  n0ding:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        VERSION: backup-restore-drill
+    image: ${N0DING_DRILL_IMAGE:?set N0DING_DRILL_IMAGE}
+    depends_on:
+      fixture:
+        condition: service_healthy
+    environment:
+      N0DING_PUBLIC_URL: http://n0ding:8080
+    ports:
+      - "127.0.0.1:${N0DING_DRILL_PORT:?set N0DING_DRILL_PORT}:8080"
+    volumes:
+      - type: bind
+        source: ${N0DING_DRILL_CONFIG:?set N0DING_DRILL_CONFIG}
+        target: /etc/n0ding/n0ding.toml
+        read_only: true
+      - cache:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+volumes:
+  cache:
+    external: true
+    name: ${N0DING_DRILL_CACHE_VOLUME:?set N0DING_DRILL_CACHE_VOLUME}

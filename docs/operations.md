@@ -94,22 +94,42 @@ describes the security tradeoff.
 The cache is disposable: deleting it loses performance, not source artifacts.
 Back up the configuration separately because it is not stored in `/data`.
 
+The repository includes a deterministic, same-version recovery drill:
+
+```powershell
+.\tools\backup-restore-drill.ps1
+```
+
+It stops n0ding, archives cache plus config, restores into a new empty volume,
+revalidates npm lockfile integrity and OCI digests, exercises rollback and a
+corrupt-object refetch, and scans the archive and restored evidence for fake
+credential canaries. See the
+[stopped Compose backup/restore drill](backup-restore-drill.md) for its exact
+scope and measured result.
+
 For a consistent cache backup, stop n0ding first so no commit can occur between
-copying a body and its metadata:
+copying a body and its metadata. Verify the service is stopped before copying:
 
 ```sh
 docker compose stop n0ding
+test "$(docker inspect --format '{{.State.Running}}' \
+  "$(docker compose ps --all -q n0ding)")" = "false"
 docker run --rm \
   --volumes-from "$(docker compose ps --all -q n0ding)" \
   -v "$PWD:/backup" \
   alpine:3.22 \
-  tar -czf /backup/n0ding-cache.tgz -C /data .
+  tar -cf /backup/n0ding-cache.tar -C /data .
 docker compose start n0ding
 ```
 
 Docker's official
 [volume backup and restore guide](https://docs.docker.com/engine/storage/volumes/#back-up-restore-or-migrate-data-volumes)
 uses the same temporary-container pattern.
+
+The example stays uncompressed so the existing streaming canary scanner can
+inspect the archive directly. Keep the archive and restored tree in the scan
+set; do not assume that scanning only filenames or only a compressed wrapper
+examines its contents.
 
 Restore into a new empty volume first:
 
@@ -119,16 +139,29 @@ docker run --rm \
   -v n0ding-restore:/data \
   -v "$PWD:/backup:ro" \
   alpine:3.22 \
-  tar -xzf /backup/n0ding-cache.tgz -C /data
+  tar -xf /backup/n0ding-cache.tar -C /data
 ```
 
-Then point a stopped test deployment at `n0ding-restore` and validate
-`/healthz`, `/api/v1/status`, one npm request, and one OCI pull before replacing
-the original volume. Restoring into a non-empty live cache is unsupported.
+Validate the archive members before extraction and preserve the original
+volume until recovery is accepted. Then point a stopped test deployment at
+`n0ding-restore` and validate:
 
-The body and metadata format is intentionally backup-friendly, but it is not a
-stable cross-version storage API yet. If restore fails, start with an empty
-cache and let clients repopulate it.
+- `/healthz`, `/api/v1/status`, and `/metrics`;
+- `npm ci` from a committed lockfile with an empty npm client cache;
+- one OCI request or pull and its recorded digest;
+- authorized and denied requests when private upstream handling is enabled;
+- logs and restored state with disposable credential canaries.
+
+Restoring into a live or non-empty volume, merging archives, and sharing the
+volume between processes are unsupported. The body and metadata format is
+backup-friendly but is not a stable cross-version storage API.
+
+Missing bodies are cache misses. Malformed metadata, truncated bodies, and
+metadata/body size disagreement are neither counted nor served. On access,
+n0ding logs the lookup failure and attempts a fresh upstream fetch. If the
+upstream cannot repair the object, switch back to the untouched source volume
+or discard the restored cache and repopulate it. Do not delete or edit
+individual objects while n0ding is running.
 
 ## Concurrency model
 

@@ -22,6 +22,9 @@ All notable changes to n0ding are documented in this file. The project follows
 - Added a deterministic full-server private-upstream drill covering two
   identities, denied access, revocation, OCI digest authorization, redirects,
   and credential-canary scans of cache and operator outputs.
+- Added a stopped Compose backup/restore drill with npm lockfile integrity, OCI
+  digest/identity checks, rollback, corrupt-object refetch, and archive plus
+  restored-state credential-canary scanning.
 
 ### Documentation
 
@@ -31,6 +34,8 @@ All notable changes to n0ding are documented in this file. The project follows
 - Added a disposable manual npm/OCI private-service drill, secret-free example
   config, and streaming credential-canary scanner without claiming an external
   provider run.
+- Documented measured same-version Compose restore behavior, unsupported
+  corrupt/cross-version cases, and the rollback path.
 
 ## [0.1.0] - Unreleased (private hardening baseline)
 

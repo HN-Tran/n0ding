@@ -34,3 +34,12 @@ jobs:
       - uses: actions/checkout@v6
       - run: docker compose config --quiet
       - run: docker build --build-arg VERSION=ci --tag n0ding:ci .
+
+  backup-restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run stopped Compose backup/restore drill
+        shell: pwsh
+        run: ./tools/backup-restore-drill.ps1
