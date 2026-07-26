@@ -88,9 +88,14 @@ revocation or token-lifetime evidence.
 
 ## 3. Retention, concurrency, and recovery
 
+- [x] Commit a configurable, deterministic retention/concurrency runner with
+  separate short-smoke and 168-hour profiles.
+- [x] Pass the short smoke with concurrent npm/OCI clients, mixed identities,
+  a canceled download, forced process termination/restart, forced expiry,
+  disk/status/metrics evidence, cache-pair validation, and canary scanning.
 - [ ] Run a seven-day soak with concurrent npm and OCI clients, forced expiry,
   process restarts, and disk-usage evidence.
-- [ ] Confirm no corrupt complete objects after forced client disconnects and
+- [x] Confirm no corrupt complete objects after forced client disconnects and
   process termination.
 - [x] Back up a stopped Compose cache and config.
 - [x] Restore into a fresh volume and revalidate npm lockfile integrity plus
@@ -102,8 +107,10 @@ revocation or token-lifetime evidence.
 The deterministic [stopped Compose backup/restore drill](backup-restore-drill.md)
 also proves restored identity checks, archive/restored-state canary scanning,
 rollback to the untouched source volume, and safe refetch of a deliberately
-truncated cache body. Forced-disconnect/process-termination behavior remains a
-separate soak gate.
+truncated cache body. The
+[retention/concurrency soak](retention-soak.md) now passes the separate short
+forced-disconnect/process-termination gate, but `seven_day_completed` remains
+false until one uninterrupted 168-hour run finishes.
 
 ## 4. Real-client and TLS compatibility
 

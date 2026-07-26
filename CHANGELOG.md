@@ -25,6 +25,10 @@ All notable changes to n0ding are documented in this file. The project follows
 - Added a stopped Compose backup/restore drill with npm lockfile integrity, OCI
   digest/identity checks, rollback, corrupt-object refetch, and archive plus
   restored-state credential-canary scanning.
+- Added configurable short and seven-day retention/concurrency soak profiles
+  with concurrent npm/OCI fixtures, mixed identities, client cancellation,
+  forced restart/expiry, disk measurements, integrity checks, and artifact
+  canary scanning.
 
 ### Documentation
 
@@ -36,6 +40,8 @@ All notable changes to n0ding are documented in this file. The project follows
   provider run.
 - Documented measured same-version Compose restore behavior, unsupported
   corrupt/cross-version cases, and the rollback path.
+- Documented soak pass/fail criteria, durable progress/results, safe artifact
+  handling, and the explicit rule that a smoke run is not seven-day evidence.
 
 ## [0.1.0] - Unreleased (private hardening baseline)
 

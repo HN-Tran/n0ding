@@ -178,6 +178,29 @@ individual objects while n0ding is running.
 - Atomic temporary-file commits and digest verification prevent an incomplete
   response from becoming a complete cached object.
 
+## Retention and concurrency soak
+
+Run the committed short smoke before changing cache, GC, proxy streaming, or
+identity policy:
+
+```powershell
+.\tools\retention-soak.ps1 -Mode Smoke
+```
+
+Start the actual seven-day private gate only on a host that can remain
+available for the full interval:
+
+```powershell
+.\tools\retention-soak.ps1 -Mode SevenDay
+```
+
+The runner uses an isolated Compose project, volume, local fixture, fake
+credentials, and unique local image tags. It preserves evidence under
+`.tmp/retention-soak/<id>` while removing only its generated Docker resources.
+Do not treat a short or resumed run as seven-day evidence. Exact profiles,
+pass/fail criteria, artifacts, and cleanup behavior are in the
+[retention/concurrency soak guide](retention-soak.md).
+
 ## Known limitations
 
 - n0ding is not an offline mirror. OCI cache hits still depend on an upstream
@@ -191,3 +214,5 @@ individual objects while n0ding is running.
   quota.
 - There is no multi-process or shared-volume locking.
 - Only local filesystem storage is supported.
+- The deterministic retention smoke has passed; the uninterrupted seven-day
+  soak and age-only-versus-byte-limit decision remain open.

@@ -43,3 +43,12 @@ jobs:
       - name: Run stopped Compose backup/restore drill
         shell: pwsh
         run: ./tools/backup-restore-drill.ps1
+
+  soak-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run short retention/concurrency smoke
+        shell: pwsh
+        run: ./tools/retention-soak.ps1 -Mode Smoke

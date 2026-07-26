@@ -613,3 +613,47 @@ This proves same-version fixture recovery, not cross-version cache-format
 compatibility or a backup containing real private artifacts. Exact procedure,
 failure semantics, and evidence paths are in
 [backup-restore-drill.md](backup-restore-drill.md).
+
+## Retention/concurrency smoke soak
+
+Validated 2026-07-26 with `tools/retention-soak.ps1 -Mode Smoke`. This was a
+45-second requested / 48.011-second elapsed smoke. It was **not** a seven-day
+run, and its result records `seven_day_completed: false`.
+
+The isolated Compose stack used six concurrent clients per new npm metadata,
+npm tarball, OCI manifest, and OCI blob key. Every cold key produced exactly
+one upstream `GET`, one miss, and five hits. Replaying the same four keys after
+a forced n0ding process restart produced six hits and zero upstream `GET`s per
+key.
+
+| Measurement | Result |
+|---|---:|
+| Workload cycles | 8 |
+| Client-observed hits / misses | 164 / 60 |
+| Denied npm/OCI identity checks | 16 |
+| Controlled SIGKILL/restart cycles | 1 |
+| Aggregate npm server hits / misses | 82 / 38 |
+| Aggregate OCI server hits / misses | 82 / 24 |
+| Expected OCI errors | 1 (`context canceled`) |
+| Complete objects at forced-expiry point | 0 |
+| Storage bytes at forced-expiry point | 0 |
+| Volume usage before / after forced expiry | 320 / 36 KiB |
+| Maximum volume use including killed temp write | 1,820 KiB |
+| Final complete objects / temp files | 20 / 0 |
+| Canary scan | 115 files, 8 values, 0 findings |
+
+The client-abort phase closed a slow digest-bearing OCI response after 64 KiB;
+neither a complete object nor a temp file remained. A second slow response was
+active when n0ding received `SIGKILL`. Startup removed its 1,802,240-byte temp
+file, after which the previously complete cache entries remained hits.
+
+Periodic GC then deleted two npm and two OCI objects. Both repository snapshots
+reached zero objects/bytes, disk use fell, and the next identical requests were
+misses followed by valid refetches. Every captured status value matched its
+Prometheus metric. The stopped final cache export contained only size-matched
+body/metadata pairs, and all OCI bodies matched their persisted SHA-256 digest.
+
+Exact workload, pass/fail criteria, seven-day command, and artifact layout are
+in [retention-soak.md](retention-soak.md). Long-duration growth, repeated
+restart/expiry races across 168 hours, and the final retention-policy decision
+remain unverified until that profile actually completes.

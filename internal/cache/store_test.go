@@ -254,6 +254,50 @@ func TestVerifiedStreamRejectsInvalidBody(t *testing.T) {
 	}
 }
 
+func TestCanceledDownstreamLeavesNoCompleteOrTemporaryObject(t *testing.T) {
+	root := t.TempDir()
+	store, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	downstreamErr := errors.New("client canceled")
+	downstream := &failAfterWriter{
+		remaining: 4,
+		err:       downstreamErr,
+	}
+	err = store.PutStream(
+		"canceled-download",
+		Metadata{Status: http.StatusOK},
+		bytes.NewReader([]byte("incomplete response body")),
+		downstream,
+	)
+	if !errors.Is(err, downstreamErr) {
+		t.Fatalf("put error = %v, want %v", err, downstreamErr)
+	}
+	if _, found, lookupErr := store.Lookup("canceled-download", time.Hour); lookupErr != nil || found {
+		t.Fatalf("lookup after cancellation: found=%v err=%v", found, lookupErr)
+	}
+	bytes, objects, err := store.Size()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes != 0 || objects != 0 {
+		t.Fatalf("canceled stream counted as complete: bytes=%d objects=%d", bytes, objects)
+	}
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() && isTempName(entry.Name()) {
+			t.Fatalf("temporary file remained after cancellation: %s", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRestoredIncompleteOrCorruptObjectsAreNeverCountedAsComplete(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -355,4 +399,22 @@ func TestRestoredIncompleteOrCorruptObjectsAreNeverCountedAsComplete(t *testing.
 			}
 		})
 	}
+}
+
+type failAfterWriter struct {
+	remaining int
+	err       error
+}
+
+func (writer *failAfterWriter) Write(body []byte) (int, error) {
+	if writer.remaining <= 0 {
+		return 0, writer.err
+	}
+	if len(body) <= writer.remaining {
+		writer.remaining -= len(body)
+		return len(body), nil
+	}
+	written := writer.remaining
+	writer.remaining = 0
+	return written, writer.err
 }

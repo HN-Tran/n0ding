@@ -1,0 +1,47 @@
+services:
+  fixture:
+    build:
+      context: .
+      dockerfile: Dockerfile.fixture
+    image: ${N0DING_SOAK_FIXTURE_IMAGE:?set N0DING_SOAK_FIXTURE_IMAGE}
+    ports:
+      - "127.0.0.1:${N0DING_SOAK_FIXTURE_PORT:?set N0DING_SOAK_FIXTURE_PORT}:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/healthz"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+
+  n0ding:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        VERSION: retention-soak
+    image: ${N0DING_SOAK_IMAGE:?set N0DING_SOAK_IMAGE}
+    depends_on:
+      fixture:
+        condition: service_healthy
+    environment:
+      N0DING_PUBLIC_URL: http://n0ding:8080
+      N0DING_SOAK_MAX_AGE: ${N0DING_SOAK_MAX_AGE:?set N0DING_SOAK_MAX_AGE}
+      N0DING_SOAK_GC_INTERVAL: ${N0DING_SOAK_GC_INTERVAL:?set N0DING_SOAK_GC_INTERVAL}
+      N0DING_SOAK_STALE_TEMP_AGE: ${N0DING_SOAK_STALE_TEMP_AGE:?set N0DING_SOAK_STALE_TEMP_AGE}
+    ports:
+      - "127.0.0.1:${N0DING_SOAK_PORT:?set N0DING_SOAK_PORT}:8080"
+    volumes:
+      - type: bind
+        source: ${N0DING_SOAK_CONFIG:?set N0DING_SOAK_CONFIG}
+        target: /etc/n0ding/n0ding.toml
+        read_only: true
+      - cache:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+
+volumes:
+  cache:
+    external: true
+    name: ${N0DING_SOAK_CACHE_VOLUME:?set N0DING_SOAK_CACHE_VOLUME}
