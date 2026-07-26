@@ -187,6 +187,17 @@ go build -trimpath -o dist/n0ding ./cmd/n0ding
 go run ./cmd/n0ding -config config/n0ding.local.toml
 ```
 
+If Go is not installed locally, use the disposable Docker toolchain targets:
+
+```sh
+make docker-test
+make docker-check
+make docker-shell
+```
+
+These targets use `golang:1.24`, mount the checkout at `/src`, and keep Go
+build/module/temp caches under `.tmp/`, which is ignored by Git.
+
 The [architecture](docs/architecture.md), [baseline
 scorecard](docs/spike-scorecard.md), [threat model](docs/threat-model.md), and
 [v0.1-private roadmap](docs/release-checklist.md) describe the current
