@@ -42,6 +42,9 @@ All notable changes to n0ding are documented in this file. The project follows
   corrupt/cross-version cases, and the rollback path.
 - Documented soak pass/fail criteria, durable progress/results, safe artifact
   handling, and the explicit rule that a smoke run is not seven-day evidence.
+- Conditionally accepted age-only retention for the private alpha, documented
+  disk-capacity guardrails and the remaining disk-full risk, and recorded the
+  correctness requirements for a future strict aggregate byte limit.
 
 ## [0.1.0] - Unreleased (private hardening baseline)
 

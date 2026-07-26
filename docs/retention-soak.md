@@ -175,7 +175,8 @@ The smoke proves the runner and short-timescale invariants, not seven days of
 availability, bounded growth, repeated expiry/restart races, or cumulative
 resource behavior. It also does not replace real npm/Docker clients, real
 private providers, TLS testing, network-partition testing, or a strict cache
-size limit.
+size limit. Its disk samples include real volume usage, but cannot turn
+age-only GC into a byte bound.
 
 Normal script failures run cleanup. Abrupt host shutdown, Docker daemon loss,
 or forced termination of the PowerShell process can prevent that `finally`
@@ -183,6 +184,10 @@ block. In that case, inspect resources whose exact names contain the evidence
 directory's `<id>` before removing them; do not use broad Docker cleanup
 commands.
 
-After a real seven-day pass, the next gate is the explicit retention decision:
-accept age-only GC for v0.1-private or implement a strict byte limit. The
-real-client/TLS compatibility matrix follows that decision.
+The [retention policy decision](retention-policy.md) conditionally accepts
+age-only GC for the private alpha and explains why a strict aggregate byte
+limit is not a small safe patch. After a real seven-day pass, the next gate is
+to record the intended deployment's capacity, alerts, observed growth
+headroom, and explicit residual-risk acceptance. Implement the documented
+`max_bytes` design instead if that evidence is not acceptable. The
+real-client/TLS compatibility matrix follows that gate.

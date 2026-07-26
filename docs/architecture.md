@@ -99,7 +99,12 @@ when requested. Physical retention is separate:
   size-mismatched object pairs.
 
 Age is measured from atomic cache commit, not last access. The MVP deliberately
-does not implement LRU or a strict size quota.
+does not implement LRU or a strict size quota. This is conditionally accepted
+for `v0.1-private` only with a disposable, capacity-monitored cache. A safe
+future aggregate limit needs in-flight reservations, active-reader handling,
+repository-wide coordination, and accounting beyond valid complete bodies;
+the design boundary is recorded in
+[retention-policy.md](retention-policy.md).
 
 ## Concurrency model
 
@@ -163,11 +168,12 @@ These are MVP boundaries.
 
 ## Next architecture gate
 
-The fixture-level identity and redirect slice is complete. The next
-architecture gate is a real private npm and OCI upstream drill with two
-identities, denied access, revocation, redirect observation, and credential
-canary scans. Recovery, soak, real-client/TLS, and PyPI work then follow the
-ordered [v0.1-private roadmap](release-checklist.md).
+The short retention/concurrency smoke, stopped recovery drill, and retention
+policy decision are complete. The next retention gate is one uninterrupted
+seven-day run followed by deployment-specific disk-capacity evidence and
+explicit acceptance of the missing byte quota. Real private-provider,
+real-client/TLS, and PyPI work remain ordered separately in the
+[v0.1-private roadmap](release-checklist.md).
 
 PyPI has a separate [design gate](pypi-design.md). Private publishing remains
 outside the read-only architecture.

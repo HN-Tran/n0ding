@@ -165,13 +165,15 @@ credentials into a committed config.
 - PyPI is a design gate, not an implemented adapter.
 - Podman has not yet been tested.
 - Range requests are proxied, but partial responses are not cached.
-- Retention is based on maximum object age, not LRU or a strict byte quota.
+- Retention is based on maximum object age, not LRU or a strict byte quota;
+  private-alpha use requires filesystem capacity monitoring.
 - Only one n0ding process may write to a cache directory.
 - Only local filesystem storage is supported.
 
 See [troubleshooting](docs/troubleshooting.md) and the
 [real-client compatibility evidence](docs/compatibility.md) for operational
-details.
+details. The [retention decision](docs/retention-policy.md) records the
+disk-full failure mode and operator guardrails.
 
 ## Development
 

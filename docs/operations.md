@@ -201,6 +201,35 @@ Do not treat a short or resumed run as seven-day evidence. Exact profiles,
 pass/fail criteria, artifacts, and cleanup behavior are in the
 [retention/concurrency soak guide](retention-soak.md).
 
+## Disk capacity and age-only retention
+
+`v0.1-private` deliberately keeps age-only retention. It has no strict byte
+quota. This is acceptable only for a disposable private-alpha cache on a
+capacity-monitored, preferably dedicated volume.
+
+Monitor both n0ding's valid complete-object total and the real filesystem:
+
+```sh
+curl -fsS http://localhost:8080/metrics
+docker compose exec -T n0ding du -sk /data
+docker compose exec -T n0ding df -Pk /data
+```
+
+Alert at less than 20% free space and treat less than 10% as critical. Also
+alert when the measured growth rate predicts exhaustion before the oldest
+objects can reach `storage.max_age`. The repository storage metric excludes
+temporary, corrupt/orphaned, metadata, and filesystem-overhead bytes, so it
+cannot replace `df`.
+
+Choose `max_age` from the usable capacity and worst credible unique-ingress
+rate. If pressure grows, lower `max_age` and restart n0ding to run startup GC.
+If space remains critical, stop the service before replacing its disposable
+cache volume; never delete individual cache objects while n0ding is running.
+
+The complete decision, remaining disk-full failure mode, capacity example, and
+requirements for a future strict aggregate limit are in the
+[retention policy decision](retention-policy.md).
+
 ## Known limitations
 
 - n0ding is not an offline mirror. OCI cache hits still depend on an upstream
@@ -211,8 +240,8 @@ pass/fail criteria, artifacts, and cleanup behavior are in the
 - Podman remains untested.
 - Range requests are proxied but partial responses are not cached.
 - Retention is maximum age from commit time, not LRU and not a strict size
-  quota.
+  quota. Disk monitoring and capacity planning are required.
 - There is no multi-process or shared-volume locking.
 - Only local filesystem storage is supported.
 - The deterministic retention smoke has passed; the uninterrupted seven-day
-  soak and age-only-versus-byte-limit decision remain open.
+  soak and per-deployment disk-capacity/risk-acceptance gate remain open.

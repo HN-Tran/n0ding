@@ -48,7 +48,7 @@ users who can modify it are outside the current integrity boundary.
 | T6 | Partial or corrupt object committed or restored | Atomic commit, size check, OCI SHA-256 verification, temp cleanup; missing/malformed/size-mismatched restored pairs are not counted or served; restore and retention smoke prove truncated-body refetch, canceled-stream cleanup, SIGKILL temp cleanup, and final body/metadata integrity | npm body integrity is ultimately enforced by npm/lockfile SRI; an unavailable upstream prevents repair; seven-day evidence remains pending |
 | T7 | Malicious upstream poisons clients | Configured HTTPS upstream, OCI digest checks, npm client integrity where present | No signature, provenance, malware, or policy verification |
 | T8 | Unauthorized client reads private cache | No n0ding client authentication exists | Bind privately and enforce TLS/auth at a reverse proxy; private-use auth topology needs a drill |
-| T9 | Disk exhaustion or deletion races | Age-based GC deletes only complete objects and ignores active temps; store locking protects local commits; the short soak proves forced expiry to zero complete objects, disk reduction, refetch, concurrent writers, and status/metrics consistency | No strict byte quota; a real seven-day run and the age-only-versus-byte-limit decision remain pending |
+| T9 | Disk exhaustion or deletion races | Age-based GC deletes only complete objects and ignores active temps; store locking protects local commits; the short soak proves forced expiry to zero complete objects, disk reduction, refetch, concurrent writers, and status/metrics consistency; the private-alpha decision requires dedicated capacity plus host free-space alerts | Age alone does not bound burst ingress, in-flight temps, malformed/orphaned bytes, or total filesystem use; no strict byte quota exists; the real seven-day run and per-deployment capacity/risk-acceptance drill remain pending |
 | T10 | Backup captures inconsistent state or secrets | Stopped Compose backup includes cache and config; restore targets a fresh empty volume; archive members, cache/status/metrics/log/error outputs, restored identity behavior, rollback, timings, and canaries are checked deterministically in CI | Cross-version format compatibility and backup of real private-upstream output remain unverified |
 | T11 | Multiple writers corrupt storage | Documented one-process/one-writable-cache rule | No distributed lock; deployment must enforce the rule |
 | T12 | SSRF through client-controlled target | Adapter constructs initial targets under one configured upstream; redirect credentials are exact-origin only; deterministic cross-origin success and failure redirects strip credentials | Redirect destinations remain upstream-controlled and are not allowlisted; real provider chains remain pending |
@@ -102,6 +102,8 @@ service procedure is [private-upstream-drill.md](private-upstream-drill.md).
 
 Review this model before:
 
+- implementing the aggregate byte-limit design in
+  [retention-policy.md](retention-policy.md);
 - implementing private-upstream credential configuration;
 - adding PyPI;
 - changing the cache key or response-header policy;

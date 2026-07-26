@@ -9,6 +9,7 @@ log_level = "info"
 [storage]
 path = "./data"
 # Complete objects are removed this long after their cache commit.
+# This is not a disk-size bound; monitor the filesystem containing this path.
 max_age = "720h"
 gc_interval = "1h"
 # Cache-created temporary writes older than this are removed at startup.

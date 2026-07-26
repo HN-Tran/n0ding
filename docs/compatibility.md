@@ -655,5 +655,11 @@ body/metadata pairs, and all OCI bodies matched their persisted SHA-256 digest.
 
 Exact workload, pass/fail criteria, seven-day command, and artifact layout are
 in [retention-soak.md](retention-soak.md). Long-duration growth, repeated
-restart/expiry races across 168 hours, and the final retention-policy decision
-remain unverified until that profile actually completes.
+restart/expiry races across 168 hours remain unverified until that profile
+actually completes.
+
+The subsequent [retention policy decision](retention-policy.md) made no runtime
+compatibility change: `v0.1-private` keeps the tested age-only behavior and
+does not claim a strict byte limit. Before the private gate closes, the target
+deployment still needs a real seven-day result plus capacity, free-space alert,
+and growth-headroom evidence.

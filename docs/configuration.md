@@ -80,6 +80,12 @@ GC is intentionally age-based because the existing metadata already records a
 trusted commit timestamp. It does not implement LRU or a strict byte quota.
 Accessing an object does not extend its `max_age`; a refetch does.
 
+The default `720h` is a compatibility-oriented starting value, not a capacity
+recommendation. Age alone cannot bound disk use when unique package/image
+ingress is unbounded. Private-alpha operators must select `max_age` from their
+volume capacity and credible ingress rate and monitor real filesystem free
+space. See the [retention policy decision](retention-policy.md).
+
 Startup cleanup only considers cache-created temporary filenames older than
 `stale_temp_age`. Runtime GC ignores all temporary files and deletes an object
 only when both its metadata and body exist, metadata parses, and the recorded

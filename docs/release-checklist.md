@@ -101,8 +101,12 @@ revocation or token-lifetime evidence.
 - [x] Restore into a fresh volume and revalidate npm lockfile integrity plus
   recorded OCI digests.
 - [x] Record restore duration, failure handling, and rollback procedure.
-- [ ] Decide whether age-only retention is sufficient for private use or a
-  strict byte limit is required.
+- [x] Record the `v0.1-private` decision: age-only retention is conditionally
+  acceptable for a disposable, capacity-monitored private-alpha cache.
+- [ ] Close the disk-capacity gate after the real seven-day soak by recording
+  the intended deployment's volume capacity, alert thresholds, growth
+  headroom, and explicit acceptance of the missing strict byte quota; otherwise
+  implement the aggregate `max_bytes` design first.
 
 The deterministic [stopped Compose backup/restore drill](backup-restore-drill.md)
 also proves restored identity checks, archive/restored-state canary scanning,
@@ -110,7 +114,9 @@ rollback to the untouched source volume, and safe refetch of a deliberately
 truncated cache body. The
 [retention/concurrency soak](retention-soak.md) now passes the separate short
 forced-disconnect/process-termination gate, but `seven_day_completed` remains
-false until one uninterrupted 168-hour run finishes.
+false until one uninterrupted 168-hour run finishes. The conditional retention
+decision, disk-full failure mode, operator guardrails, and future strict-limit
+requirements are in [retention-policy.md](retention-policy.md).
 
 ## 4. Real-client and TLS compatibility
 
