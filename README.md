@@ -66,7 +66,8 @@ docker compose up --build -d
 ```
 
 See the [operations guide](docs/operations.md) before exposing n0ding outside
-the local machine.
+the local machine. For repeated private-alpha self-use, work through the
+[private self-use checklist](docs/private-self-use.md).
 
 ## npm client setup
 

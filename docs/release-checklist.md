@@ -118,6 +118,19 @@ false until one uninterrupted 168-hour run finishes. The conditional retention
 decision, disk-full failure mode, operator guardrails, and future strict-limit
 requirements are in [retention-policy.md](retention-policy.md).
 
+## Private self-use readiness slice
+
+The focused self-use checklist in [private-self-use.md](private-self-use.md)
+is the current operator gate for a disposable private-alpha deployment. It
+requires a dedicated cache volume, free-space alerts, capacity planning from
+observed ingress, backup/restore validation, canary-scan references,
+status/metrics checks, safe shutdown/restart commands, rollback steps, and
+explicit unsupported-use warnings.
+
+Passing that checklist does not close the full `v0.1-private` trust gate. It
+does not prove real private-provider credentials, trusted TLS client matrices,
+PyPI support, strict byte-quota behavior, or the uninterrupted seven-day soak.
+
 ## 4. Real-client and TLS compatibility
 
 - [ ] Repeat the npm matrix on a supported current npm client.

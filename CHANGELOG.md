@@ -45,6 +45,9 @@ All notable changes to n0ding are documented in this file. The project follows
 - Conditionally accepted age-only retention for the private alpha, documented
   disk-capacity guardrails and the remaining disk-full risk, and recorded the
   correctness requirements for a future strict aggregate byte limit.
+- Added a private self-use checklist that ties together cache volume isolation,
+  capacity alerts, backup/restore, canary scans, status checks, safe restarts,
+  rollback, cleanup, and remaining not-ready warnings.
 
 ## [0.1.0] - Unreleased (private hardening baseline)
 

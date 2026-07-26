@@ -8,6 +8,9 @@ unsupported.
 For failure symptoms and diagnostic commands, see
 [the troubleshooting guide](troubleshooting.md).
 
+For a concise private-alpha operator gate before repeated self-use, see the
+[private self-use checklist](private-self-use.md).
+
 ## Docker Compose quickstart
 
 For local evaluation:
