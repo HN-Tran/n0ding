@@ -5,12 +5,26 @@ All notable changes to n0ding are documented in this file. The project follows
 
 ## [Unreleased]
 
-No changes yet.
+### Security
 
-## [0.1.0] - 2026-07-25 (MVP preview)
+- Added one shared request/response header policy for npm and OCI.
+- Prevented persistent caching of private/no-store/no-cache,
+  authentication-metadata, unsafe-cookie, and unsupported-`Vary` responses.
+- Added a storage-boundary scrub for known credential-bearing cache metadata.
+- Removed upstream URL userinfo, query, and fragment from status and explicit
+  upstream/error URL log fields.
+- Added focused negative tests and an initial threat model.
 
-This is the first narrow, read-only preview. It is for evaluation on trusted
-networks and is not a production supply-chain stability release.
+### Documentation
+
+- Reframed v0.1 as a private hardening phase with no public launch.
+- Replaced the public release checklist with an ordered private-use roadmap.
+- Added a PyPI design gate instead of a partial implementation.
+
+## [0.1.0] - Unreleased (private hardening baseline)
+
+This section records the narrow npm + OCI baseline being hardened privately.
+No tag, public release, or published image exists.
 
 ### Added
 

@@ -1,67 +1,130 @@
-# Release checklist
+# v0.1-private roadmap
 
-Target: `v0.1.0` narrow MVP preview.
+Target: a trustworthy private-use hardening milestone. This is not a public
+release checklist and does not authorize a tag, GitHub Release, image
+publication, or announcement.
 
-## Scope and documentation
+## Working definition of trustworthy
 
-- [x] Scope is read-only npm + OCI pull-through caching.
-- [x] README states what n0ding is and is not.
-- [x] Docker Compose, npm, OCI/Docker, TLS, backup, and restore guidance exists.
-- [x] Example configuration and complete configuration reference exist.
-- [x] Architecture and troubleshooting documents match current behavior.
-- [x] Known limitations explicitly reject offline-mirror, private-registry,
-  auth/RBAC, and production-stability claims.
-- [x] Apache-2.0, contributing guidance, security policy, and changelog exist.
+`v0.1-private` is trustworthy enough for repeated use on a private network when:
 
-## Engineering evidence
+- standard clients can use npm, OCI, and PyPI read-only caches without plugins;
+- private-upstream credentials are scoped, never persisted in cache metadata,
+  and covered by negative tests;
+- cache admission, concurrency, retention, crash cleanup, backup, and restore
+  have repeatable evidence;
+- compatibility and known limitations are explicit;
+- the threat model has no unowned critical risks.
 
-- [x] `go test ./...`
-- [x] `go vet ./...`
-- [x] release-shaped Go build
-- [x] config validation
-- [x] container build
-- [x] `docker compose config --quiet`
-- [x] real npm scoped-package and lockfile/integrity validation
-- [x] real Docker multi-image, multi-arch, restart, cache-count, and digest
-  validation
-- [x] startup cleanup, age-based GC, and same-key concurrency tests
+It is still not a production supply-chain security platform.
 
-The exact client versions, commands, counters, and digests are recorded in
-[compatibility.md](compatibility.md) and [spike-scorecard.md](spike-scorecard.md).
+## 0. npm + OCI baseline
 
-## Before creating the `v0.1.0` tag
+- [x] npm scoped packages, lockfiles, and integrity accepted by real npm.
+- [x] OCI manifests, indexes, configs, and blobs accepted by real Docker.
+- [x] OCI SHA-256 verification before cache commit.
+- [x] Persistent local filesystem cache with atomic writes.
+- [x] Startup stale-temp cleanup, age-based GC, and same-key coalescing.
+- [x] One binary, one config, no database, no third-party Go dependencies.
 
-- [ ] Confirm the CI run is green on the exact release commit.
-- [ ] Confirm a monitored private vulnerability-reporting path.
-- [ ] Confirm `git status --short` is empty and `main` matches `origin/main`.
-- [ ] Create an annotated `v0.1.0` tag from that commit.
-- [ ] Publish release notes from `CHANGELOG.md`, retaining the preview warning.
-- [ ] Build the release container with `VERSION=v0.1.0` and record its immutable
-  digest if an image is published.
+Evidence remains in [compatibility.md](compatibility.md) and
+[spike-scorecard.md](spike-scorecard.md).
 
-Creating the tag, GitHub release, or publishing an image is intentionally not
-part of documentation preparation.
+## 1. Shared-cache and credential-safety foundation
 
-## Exact gates for v0.2.0
+- [x] Central request/response header policy shared by npm and OCI.
+- [x] Client cookies, proxy credentials, OTP headers, forwarded identity
+  headers, and Docker registry-auth transport headers are not sent upstream.
+- [x] `Authorization` is forwarded only where the adapter explicitly permits
+  it.
+- [x] Responses marked `private`, `no-store`, or `no-cache` are not stored.
+- [x] Authentication metadata is not stored; cookie-bearing responses require
+  explicit `Cache-Control: public`, and cookie fields are still scrubbed.
+- [x] Responses with `Vary` dimensions outside the cache key are not stored.
+- [x] Persistent metadata has a second credential-header scrub at the storage
+  boundary.
+- [x] Status and explicit upstream/error URL log fields remove URL userinfo,
+  query, and fragment.
+- [x] Negative unit/integration tests cover these boundaries.
+- [x] Initial [threat model](threat-model.md) records controls and residual
+  risks.
 
-v0.2.0 should remain read-only until all gates below pass:
+This is the completed first private-hardening slice.
 
-1. Run a seven-day retention and concurrency soak with forced expiry, restart,
-   and disk-usage evidence; observe no corrupt complete objects.
-2. Back up a stopped Compose cache, restore it into a fresh volume, and
-   revalidate npm lockfile integrity plus all recorded OCI digests.
-3. Verify npm and Docker through a trusted TLS reverse proxy, including
-   `public_base_url`, certificate trust, large blobs, and restart behavior.
-4. Run the OCI image/restart/digest matrix with a current Podman client.
-5. Test authenticated/private npm and OCI upstreams; prove tokens are neither
-   persisted nor shared and document logout/revocation behavior.
-6. Automate the real-client npm and OCI compatibility matrix in an isolated
-   release environment with repeatable cache counters.
-7. Perform a focused threat-model/security review of proxy headers, cache-key
-   isolation, credential forwarding, filesystem permissions, and dependency
-   pinning.
-8. Decide the v0.2.0 support matrix and storage-format compatibility policy,
-   then update migration and rollback guidance.
+## 2. Private upstreams
 
-PyPI and private publish require separate design reviews after these gates;
-they are not implied v0.2.0 features.
+- [ ] Choose an explicit secret-input model; do not silently normalize
+  credentials embedded in ordinary config strings.
+- [ ] Define supported npm authentication schemes and cache partition/bypass
+  behavior.
+- [ ] Define supported OCI token/basic-auth flows and authorization behavior
+  for tags and digests.
+- [ ] Define redirect-origin rules and prove credentials are never forwarded to
+  an unapproved redirect target.
+- [ ] Test one real private npm upstream with two identities and denied access.
+- [ ] Test one real private OCI upstream with two identities and denied access.
+- [ ] Prove logout/token revocation takes effect without a process restart.
+- [ ] Scan cache files, status output, metrics, and logs for test credentials.
+- [ ] Document which custom credential headers are unsupported.
+
+## 3. Retention, concurrency, and recovery
+
+- [ ] Run a seven-day soak with concurrent npm and OCI clients, forced expiry,
+  process restarts, and disk-usage evidence.
+- [ ] Confirm no corrupt complete objects after forced client disconnects and
+  process termination.
+- [ ] Back up a stopped Compose cache and config.
+- [ ] Restore into a fresh volume and revalidate npm lockfile integrity plus
+  recorded OCI digests.
+- [ ] Record restore duration, failure handling, and rollback procedure.
+- [ ] Decide whether age-only retention is sufficient for private use or a
+  strict byte limit is required.
+
+## 4. Real-client and TLS compatibility
+
+- [ ] Repeat the npm matrix on a supported current npm client.
+- [ ] Repeat the Docker multi-image/multi-arch/restart matrix.
+- [ ] Run the OCI matrix with a current Podman client.
+- [ ] Verify npm, Docker, and Podman through a trusted TLS reverse proxy.
+- [ ] Automate the repeatable portion of the client matrix in an isolated
+  release environment.
+- [ ] Commit a private-use support matrix with tested versions and platforms.
+
+## 5. PyPI read-only design and implementation
+
+- [x] Record the protocol, URL-rewrite, integrity, auth, and dependency
+  decisions in [pypi-design.md](pypi-design.md).
+- [ ] Resolve every blocking design decision in that document.
+- [ ] Add a PyPI adapter without weakening the shared HTTP/cache policy.
+- [ ] Support both required Simple API representation paths selected by the
+  design.
+- [ ] Verify distribution hashes before cache commit where the index supplies
+  them.
+- [ ] Test normalized names, trailing-slash redirects, wheels, source
+  distributions, yanked files, `Requires-Python`, and metadata sidecars.
+- [ ] Run two clean-client installs with pip and uv, including restart and
+  offline-client-cache isolation.
+- [ ] Test a private PyPI-compatible upstream only after the private-auth model
+  is approved.
+
+PyPI publishing remains out of scope.
+
+## v0.1-private trust gate
+
+All of the following must be true before calling the private milestone
+trustworthy:
+
+- [ ] Sections 2 through 5 have no unresolved required item.
+- [ ] `go test -race ./...`, `go vet ./...`, build, container build, and Compose
+  validation pass on the exact commit.
+- [ ] Real-client evidence is reproducible from committed commands.
+- [ ] A backup/restore drill and seven-day soak have passed.
+- [ ] Test credentials are absent from cache metadata, logs, metrics, status,
+  fixtures, and Git history.
+- [ ] The threat model is reviewed and all critical risks are closed or
+  explicitly accepted for private use.
+- [ ] README, compatibility matrix, configuration, security policy, and known
+  limitations match observed behavior.
+
+No public release follows automatically from this gate. Public readiness
+requires a separate decision.

@@ -53,6 +53,42 @@ func TestPutAndLookup(t *testing.T) {
 	}
 }
 
+func TestPutStripsSensitiveMetadataHeaders(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.PutBytes("sensitive", Metadata{
+		Status: http.StatusOK,
+		Header: http.Header{
+			"Content-Type":        {"application/octet-stream"},
+			"Set-Cookie":          {"session=secret"},
+			"Authentication-Info": {"nextnonce=secret"},
+		},
+	}, []byte("cached"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entry, found, err := store.Lookup("sensitive", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("expected cache hit")
+	}
+	defer entry.Close()
+	if got := entry.Metadata.Header.Get("Content-Type"); got != "application/octet-stream" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+	if got := entry.Metadata.Header.Get("Set-Cookie"); got != "" {
+		t.Fatalf("Set-Cookie persisted as %q", got)
+	}
+	if got := entry.Metadata.Header.Get("Authentication-Info"); got != "" {
+		t.Fatalf("Authentication-Info persisted as %q", got)
+	}
+}
+
 func TestCleanupStaleTempsRemovesOnlyOldTemporaryFiles(t *testing.T) {
 	root := t.TempDir()
 	store, err := New(root)

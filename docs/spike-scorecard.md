@@ -1,7 +1,11 @@
-# MVP readiness scorecard
+# npm + OCI baseline scorecard
 
 Assessment date: 2026-07-25
 Target: narrow, read-only npm + OCI pull-through cache
+
+This is retained as historical technical evidence. The public-preview decision
+was superseded on 2026-07-26 by the
+[v0.1-private roadmap](release-checklist.md).
 
 ## Scope guard
 
@@ -43,11 +47,11 @@ Target: narrow, read-only npm + OCI pull-through cache
 ```powershell
 go test -count=1 ./...
 go vet ./...
-go build -trimpath -ldflags="-s -w -X main.version=v0.1.0" `
+go build -trimpath -ldflags="-s -w -X main.version=v0.1-private" `
   -o dist\n0ding.exe ./cmd/n0ding
 .\dist\n0ding.exe -config config\n0ding.local.toml -check-config
 .\dist\n0ding.exe -config config\n0ding.example.toml -check-config
-docker build --build-arg VERSION=v0.1.0 --tag n0ding:v0.1.0-check .
+docker build --build-arg VERSION=v0.1-private --tag n0ding:v0.1-private-check .
 docker compose config --quiet
 ```
 
@@ -55,15 +59,15 @@ docker compose config --quiet
 |---|---|
 | All Go tests | Pass |
 | `go vet ./...` | Pass |
-| Windows release-shaped binary | Pass, 9,140,736 bytes |
+| Windows private-hardening binary | Pass, 9,151,488 bytes |
 | Container, local, and example config validation | Pass |
 | Container build, including tests | Pass |
 | Compose config validation | Pass |
 | Isolated Compose start, health, and status | Pass, 2 repositories |
 | Third-party Go dependencies | None |
 
-Release-packaging revalidation used Go 1.24.13, Docker Engine 29.5.3, and Docker
-Compose 5.1.4 on 2026-07-25. The container config was validated with
+Private-hardening validation used Go 1.24.13, Docker Engine 29.5.3, and Docker
+Compose 5.1.4 through 2026-07-26. The container config was validated with
 `N0DING_PUBLIC_URL=http://localhost:8080`, matching the Compose default.
 
 ## Real npm revalidation
@@ -130,9 +134,9 @@ objects.
 - Restore instructions have not yet completed a separate disaster-recovery
   drill.
 
-## Release-readiness verdict
+## Baseline verdict
 
-**Ready for a narrow `v0.1.0` MVP preview.**
+**Approved as the npm + OCI baseline for private hardening.**
 
 The read-only npm + OCI core now has real-client compatibility, persisted cache
 reuse, digest/integrity validation, startup cleanup, bounded age-based
@@ -142,9 +146,8 @@ changelog, example configuration, architecture and troubleshooting documents,
 Apache-2.0 licensing, contribution and security policies, and CI for Go and
 container gates. No required technical MVP gate failed.
 
-This is not yet a stable production supply-chain release. Before creating the
-tag, confirm a green CI run on the exact release commit and a monitored private
-vulnerability-reporting path. The exact v0.1.0 publication steps and v0.2.0
-reliability gates are in [the release checklist](release-checklist.md). Do not
-add PyPI, publishing, UI work, users, or RBAC before those operational gates
-are closed.
+This is not a public release or a stable production supply-chain service. The
+private roadmap now adds cache/credential safety, real private upstreams,
+recovery and soak evidence, client/TLS compatibility, a threat model, and a
+gated PyPI adapter. Publishing, UI work, users, and RBAC remain outside the
+current scope.

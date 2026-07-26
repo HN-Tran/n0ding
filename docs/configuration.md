@@ -103,3 +103,25 @@ forwarded but never persisted, and cache hits require an authorized upstream
 
 Only one OCI repository can exist because the standard Registry V2 client path
 is fixed at `/v2/`.
+
+## Credential and cache-safety behavior
+
+- `forward_authorization = false` is the npm default.
+- Enabling it accepts the client's `Authorization` header as the only supported
+  npm credential header; authenticated npm responses bypass persistent caching.
+- OCI forwards `Authorization` because Registry V2 pulls require it. Cookies,
+  proxy credentials, npm OTP fields, forwarded identity headers, and Docker
+  registry-auth transport headers are stripped for both adapters.
+- Responses marked `private`, `no-store`, or `no-cache`, responses carrying
+  authentication metadata, and responses with unsupported `Vary` dimensions
+  are not cached. Cookie-bearing responses require explicit
+  `Cache-Control: public`.
+- Known credential-bearing headers are removed again before cache metadata is
+  written, including cookies on explicitly public responses.
+- Status and explicit upstream/error URL log fields omit userinfo, query, and
+  fragment. The config file and process memory do not; do not put secrets in
+  the file until the private-upstream secret-input design is complete.
+
+Cookie, OTP, proxy, and arbitrary custom-header authentication are unsupported.
+See the [threat model](threat-model.md) and
+[private roadmap](release-checklist.md).

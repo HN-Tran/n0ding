@@ -1,6 +1,7 @@
 # Troubleshooting
 
-This guide covers the v0.1.0 read-only npm + OCI preview. Start with:
+This guide covers the `v0.1-private` read-only npm + OCI hardening phase. Start
+with:
 
 ```sh
 docker compose ps
@@ -50,9 +51,9 @@ curl http://localhost:8080/api/v1/status
 
 ## OCI cache hits fail while the upstream is unavailable
 
-This is expected in v0.1.0. n0ding is not an offline mirror. Before serving a
-cached OCI response, it asks the upstream to authorize the request and confirm
-the digest with `HEAD`.
+This is expected in `v0.1-private`. n0ding is not an offline mirror. Before
+serving a cached OCI response, it asks the upstream to authorize the request
+and confirm the digest with `HEAD`.
 
 ## npm downloads bypass n0ding or use the wrong hostname
 

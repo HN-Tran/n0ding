@@ -337,6 +337,54 @@ func TestDeniedTokenCannotUseCachedObject(t *testing.T) {
 	}
 }
 
+func TestPrivateResponseIsNotCachedAndCookieIsNotForwarded(t *testing.T) {
+	body := []byte("private compressed OCI layer bytes")
+	digest := digestOf(body)
+	var getRequests atomic.Int64
+	var leakedCookie atomic.Bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Cookie") != "" {
+			leakedCookie.Store(true)
+		}
+		getRequests.Add(1)
+		writer.Header().Set("Content-Type", "application/octet-stream")
+		writer.Header().Set("Docker-Content-Digest", digest)
+		writer.Header().Set("Cache-Control", "private, max-age=300")
+		writer.Header().Set("Set-Cookie", "session=upstream-secret; HttpOnly")
+		_, _ = writer.Write(body)
+	}))
+	defer upstream.Close()
+
+	proxy := newTestProxy(t, upstream.URL, t.TempDir())
+	path := "/v2/private/image/blobs/" + digest
+	for attempt := 0; attempt < 2; attempt++ {
+		request := httptest.NewRequest(http.MethodGet, "http://n0ding.test"+path, nil)
+		request.Header.Set("Authorization", "Bearer allowed")
+		request.Header.Set("Cookie", "client-session=must-not-leak")
+		response := httptest.NewRecorder()
+		proxy.ServeHTTP(response, request)
+
+		if response.Code != http.StatusOK || response.Body.String() != string(body) {
+			t.Fatalf("attempt %d: status=%d body=%q", attempt+1, response.Code, response.Body.String())
+		}
+		if response.Header().Get("X-N0ding-Cache") != "MISS" {
+			t.Fatalf("attempt %d cache result = %q", attempt+1, response.Header().Get("X-N0ding-Cache"))
+		}
+		if response.Header().Get("Set-Cookie") == "" {
+			t.Fatalf("attempt %d did not preserve Set-Cookie for current client", attempt+1)
+		}
+	}
+	if leakedCookie.Load() {
+		t.Fatal("client cookie leaked to OCI upstream")
+	}
+	if getRequests.Load() != 2 {
+		t.Fatalf("upstream GET requests = %d", getRequests.Load())
+	}
+	if objects := proxy.Snapshot().CacheObjects; objects != 0 {
+		t.Fatalf("cache objects = %d", objects)
+	}
+}
+
 func newTestProxy(t *testing.T, upstream, cacheDirectory string) *Proxy {
 	t.Helper()
 	store, err := cache.New(cacheDirectory)

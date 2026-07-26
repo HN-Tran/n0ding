@@ -90,6 +90,39 @@ func TestOCIRepositoryWiring(t *testing.T) {
 	}
 }
 
+func TestStatusRedactsUpstreamCredentialComponents(t *testing.T) {
+	handler, err := New(config.Config{
+		Server:  config.Server{PublicBaseURL: "http://packages.test"},
+		Storage: config.Storage{Path: filepath.Join(t.TempDir(), "data")},
+		Repositories: []config.Repository{{
+			Name:     "npm",
+			Type:     "npm",
+			Path:     "/npm/",
+			Upstream: "https://user:password@packages.example.test/base?token=secret#fragment",
+			TTL:      time.Hour,
+		}},
+	}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	body := response.Body.String()
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, body)
+	}
+	if !strings.Contains(body, `"upstream": "https://packages.example.test/base"`) {
+		t.Fatalf("sanitized upstream missing: %s", body)
+	}
+	for _, secret := range []string{"user", "password", "token", "secret", "fragment"} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("status leaked %q: %s", secret, body)
+		}
+	}
+}
+
 func TestNewRunsStartupCacheMaintenance(t *testing.T) {
 	root := t.TempDir()
 	repositoryRoot := filepath.Join(root, "npm")

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/HN-Tran/n0ding/internal/cache"
+	"github.com/HN-Tran/n0ding/internal/httppolicy"
 	"github.com/HN-Tran/n0ding/internal/repository"
 )
 
@@ -113,7 +114,9 @@ func (p *Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if rangeRequest {
 		p.stats.rangeRequests.Add(1)
 	}
-	cacheableRequest := cacheResource && !rangeRequest
+	cacheableRequest := cacheResource &&
+		!rangeRequest &&
+		!httppolicy.RequestBypassesCache(request.Header)
 	key := p.cacheKey(target, request.Header.Get("Accept"))
 
 	if cacheableRequest {
@@ -157,7 +160,7 @@ func (p *Proxy) Snapshot() repository.Snapshot {
 		Name:          p.name,
 		Type:          "oci",
 		Path:          p.path,
-		Upstream:      p.upstream.String(),
+		Upstream:      httppolicy.PublicUpstreamURL(p.upstream),
 		Requests:      p.stats.requests.Load(),
 		CacheHits:     hits,
 		CacheMisses:   misses,
@@ -188,12 +191,16 @@ func (p *Proxy) authorizeCacheHit(request *http.Request, target *url.URL, cached
 		p.logger.Warn("create OCI authorization request failed", "repository", p.name, "error", err)
 		return false
 	}
-	copyRequestHeader(authorizationRequest.Header, request.Header)
+	httppolicy.ForwardRequestHeaders(authorizationRequest.Header, request.Header, true)
 	authorizationRequest.Header.Set("Accept-Encoding", "identity")
 
 	response, err := p.client.Do(authorizationRequest)
 	if err != nil {
-		p.logger.Warn("authorize OCI cache hit failed", "repository", p.name, "error", err)
+		p.logger.Warn(
+			"authorize OCI cache hit failed",
+			"repository", p.name,
+			"error", httppolicy.SafeError(err),
+		)
 		return false
 	}
 	defer response.Body.Close()
@@ -227,7 +234,7 @@ func (p *Proxy) cacheTTL(kind, requestedDigest string) time.Duration {
 
 func (p *Proxy) serveHit(writer http.ResponseWriter, request *http.Request, entry cache.Entry) {
 	defer entry.Close()
-	copyHeader(writer.Header(), entry.Metadata.Header)
+	httppolicy.CopyHeaders(writer.Header(), entry.Metadata.Header)
 	writer.Header().Set("X-N0ding-Cache", "HIT")
 	writer.Header().Set("Age", strconv.FormatInt(int64(time.Since(entry.Metadata.StoredAt).Seconds()), 10))
 	writer.Header().Set("Content-Length", strconv.FormatInt(entry.Metadata.ContentBytes, 10))
@@ -271,7 +278,7 @@ func (p *Proxy) serveMiss(
 		p.fail(writer, request, http.StatusBadGateway, "could not create upstream request", err)
 		return
 	}
-	copyRequestHeader(upstreamRequest.Header, request.Header)
+	httppolicy.ForwardRequestHeaders(upstreamRequest.Header, request.Header, true)
 	upstreamRequest.Header.Set("Accept-Encoding", "identity")
 
 	response, err := p.client.Do(upstreamRequest)
@@ -281,9 +288,17 @@ func (p *Proxy) serveMiss(
 	}
 	defer response.Body.Close()
 
-	headers := filteredHeader(response.Header)
+	headers := httppolicy.ResponseHeaders(response.Header)
 	headers.Set("X-N0ding-Cache", "MISS")
-	cacheable := cacheableRequest && request.Method == http.MethodGet && response.StatusCode == http.StatusOK
+	cacheable := cacheableRequest &&
+		request.Method == http.MethodGet &&
+		response.StatusCode == http.StatusOK &&
+		httppolicy.ResponseAllowsStorage(
+			request.Header,
+			response.Header,
+			"Accept",
+			"Accept-Encoding",
+		)
 	if !cacheable {
 		p.passThrough(writer, request, response, headers)
 		return
@@ -299,12 +314,13 @@ func (p *Proxy) serveMiss(
 		return
 	}
 	headers.Set("Docker-Content-Digest", expectedDigest)
+	cacheHeaders := httppolicy.CacheMetadataHeaders(headers)
 
 	switch kind {
 	case "manifest":
-		p.cacheManifest(writer, request, response, headers, key, expectedDigest)
+		p.cacheManifest(writer, request, response, headers, cacheHeaders, key, expectedDigest)
 	case "blob":
-		p.cacheBlob(writer, response, headers, key, expectedDigest)
+		p.cacheBlob(writer, response, headers, cacheHeaders, key, expectedDigest)
 	default:
 		p.passThrough(writer, request, response, headers)
 	}
@@ -315,6 +331,7 @@ func (p *Proxy) cacheManifest(
 	request *http.Request,
 	response *http.Response,
 	headers http.Header,
+	cacheHeaders http.Header,
 	key string,
 	expectedDigest string,
 ) {
@@ -326,7 +343,7 @@ func (p *Proxy) cacheManifest(
 	if len(body) > maxManifestBytes {
 		p.logger.Warn("OCI manifest exceeds cache limit", "repository", p.name, "limit_bytes", maxManifestBytes)
 		headers.Del("Content-Length")
-		copyHeader(writer.Header(), headers)
+		httppolicy.CopyHeaders(writer.Header(), headers)
 		writer.WriteHeader(response.StatusCode)
 		_, _ = io.Copy(writer, io.MultiReader(bytes.NewReader(body), response.Body))
 		return
@@ -338,15 +355,16 @@ func (p *Proxy) cacheManifest(
 	}
 
 	headers.Set("Content-Length", strconv.Itoa(len(body)))
+	cacheHeaders.Set("Content-Length", strconv.Itoa(len(body)))
 	metadata := cache.Metadata{
 		Status:        response.StatusCode,
-		Header:        headers,
+		Header:        cacheHeaders,
 		ContentDigest: expectedDigest,
 	}
 	if err := p.store.PutBytes(key, metadata, body); err != nil {
 		p.logger.Warn("cache OCI manifest failed", "repository", p.name, "error", err)
 	}
-	copyHeader(writer.Header(), headers)
+	httppolicy.CopyHeaders(writer.Header(), headers)
 	writer.WriteHeader(response.StatusCode)
 	_, _ = writer.Write(body)
 }
@@ -355,17 +373,18 @@ func (p *Proxy) cacheBlob(
 	writer http.ResponseWriter,
 	response *http.Response,
 	headers http.Header,
+	cacheHeaders http.Header,
 	key string,
 	expectedDigest string,
 ) {
-	copyHeader(writer.Header(), headers)
+	httppolicy.CopyHeaders(writer.Header(), headers)
 	writer.WriteHeader(response.StatusCode)
 
 	hasher := sha256.New()
 	source := io.TeeReader(response.Body, hasher)
 	metadata := cache.Metadata{
 		Status:        response.StatusCode,
-		Header:        headers,
+		Header:        cacheHeaders,
 		ContentDigest: expectedDigest,
 	}
 	err := p.store.PutStreamVerified(
@@ -387,7 +406,7 @@ func (p *Proxy) passThrough(
 	response *http.Response,
 	headers http.Header,
 ) {
-	copyHeader(writer.Header(), headers)
+	httppolicy.CopyHeaders(writer.Header(), headers)
 	writer.WriteHeader(response.StatusCode)
 	if request.Method == http.MethodHead {
 		return
@@ -399,7 +418,13 @@ func (p *Proxy) passThrough(
 
 func (p *Proxy) fail(writer http.ResponseWriter, request *http.Request, status int, message string, err error) {
 	p.stats.errors.Add(1)
-	p.logger.Error(message, "repository", p.name, "method", request.Method, "path", request.URL.Path, "error", err)
+	p.logger.Error(
+		message,
+		"repository", p.name,
+		"method", request.Method,
+		"path", request.URL.Path,
+		"error", httppolicy.SafeError(err),
+	)
 	http.Error(writer, message, status)
 }
 
@@ -453,55 +478,6 @@ func equalBytes(left, right []byte) bool {
 		difference |= left[index] ^ right[index]
 	}
 	return difference == 0
-}
-
-func filteredHeader(source http.Header) http.Header {
-	target := make(http.Header)
-	copyHeader(target, source)
-	for _, name := range hopByHopHeaders {
-		target.Del(name)
-	}
-	return target
-}
-
-func copyHeader(target, source http.Header) {
-	for name, values := range source {
-		target.Del(name)
-		for _, value := range values {
-			target.Add(name, value)
-		}
-	}
-}
-
-func copyRequestHeader(target, source http.Header) {
-	for name, values := range source {
-		if isHopByHop(name) || strings.EqualFold(name, "Host") {
-			continue
-		}
-		for _, value := range values {
-			target.Add(name, value)
-		}
-	}
-}
-
-func isHopByHop(name string) bool {
-	for _, blocked := range hopByHopHeaders {
-		if strings.EqualFold(name, blocked) {
-			return true
-		}
-	}
-	return false
-}
-
-var hopByHopHeaders = []string{
-	"Connection",
-	"Keep-Alive",
-	"Proxy-Authenticate",
-	"Proxy-Authorization",
-	"TE",
-	"Trailer",
-	"Transfer-Encoding",
-	"Upgrade",
 }
 
 type keyedLocker struct {

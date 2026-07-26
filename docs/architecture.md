@@ -1,6 +1,6 @@
 # Architecture
 
-Status: narrow read-only MVP architecture, 2026-07-25.
+Status: `v0.1-private` read-only hardening architecture, 2026-07-26.
 
 ## Request flow
 
@@ -47,10 +47,12 @@ and blob `GET` responses are cached. Push methods remain disabled.
 - `internal/ociproxy`: OCI pull proxy, auth-challenge forwarding, manifest/blob
   classification, and SHA-256 verification.
 - `internal/cache`: filesystem persistence with hashed keys and atomic writes.
+- `internal/httppolicy`: shared credential-forwarding, cache-admission, header
+  persistence, and public-upstream-display rules.
 - `internal/httpserver`: routing, status API, metrics, startup maintenance, and
   periodic GC scheduling.
 
-The v0.1.0 preview intentionally uses no third-party Go packages.
+The `v0.1-private` baseline intentionally uses no third-party Go packages.
 
 ## Cache model
 
@@ -120,6 +122,13 @@ Client authorization is not forwarded upstream unless explicitly enabled.
 When authorization forwarding is enabled for a request, that response is not
 read from or written to the shared cache.
 
+The shared HTTP policy strips known client credential/identity headers except
+an adapter-approved `Authorization` header. It rejects persistent storage for
+private/no-store/no-cache responses, authentication metadata, unsafe cookies,
+and `Vary` dimensions outside the adapter's cache key. Cookie-bearing responses
+must be explicitly public, and the cache store still strips their cookie fields
+before writing JSON metadata.
+
 OCI is the exception because Registry V2 pulls require Bearer tokens. n0ding
 forwards those tokens but does not store them. Before serving an OCI cache hit,
 it sends an upstream `HEAD` request with the current token. A cached object is
@@ -146,15 +155,10 @@ These are MVP boundaries.
 
 ## Next architecture gate
 
-The v0.2.0 gate is release reliability, not protocol breadth:
+The next slice is explicit private-upstream credential design and canary
+testing, not another protocol adapter. Recovery, soak, real-client/TLS, and
+PyPI work then follow the ordered
+[v0.1-private roadmap](release-checklist.md).
 
-1. complete a seven-day retention/concurrency soak;
-2. restore a stopped Compose cache into a fresh volume and revalidate npm and
-   OCI digests;
-3. verify npm, Docker, and Podman through a trusted TLS reverse proxy;
-4. test private-upstream authorization without persisting or sharing
-   credentials;
-5. turn the supported client matrix into a repeatable release suite.
-
-PyPI and private publishing remain outside the read-only architecture until
-those gates close and receive separate protocol/security designs.
+PyPI has a separate [design gate](pypi-design.md). Private publishing remains
+outside the read-only architecture.

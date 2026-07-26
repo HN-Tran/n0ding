@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/HN-Tran/n0ding/internal/cache"
+	"github.com/HN-Tran/n0ding/internal/httppolicy"
 	"github.com/HN-Tran/n0ding/internal/repository"
 )
 
@@ -99,6 +100,7 @@ func (p *Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	cacheable := request.Header.Get("Range") == "" &&
+		!httppolicy.RequestBypassesCache(request.Header) &&
 		(!p.forwardAuthorization || request.Header.Get("Authorization") == "")
 	key := p.cacheKey(target, request.Header.Get("Accept"))
 
@@ -142,7 +144,7 @@ func (p *Proxy) Snapshot() repository.Snapshot {
 		Name:         p.name,
 		Type:         "npm",
 		Path:         p.path,
-		Upstream:     p.upstream.String(),
+		Upstream:     httppolicy.PublicUpstreamURL(p.upstream),
 		Requests:     requests,
 		CacheHits:    hits,
 		CacheMisses:  misses,
@@ -174,7 +176,7 @@ func (p *Proxy) cacheKey(target *url.URL, accept string) string {
 
 func (p *Proxy) serveHit(writer http.ResponseWriter, request *http.Request, entry cache.Entry) {
 	defer entry.Close()
-	copyHeader(writer.Header(), entry.Metadata.Header)
+	httppolicy.CopyHeaders(writer.Header(), entry.Metadata.Header)
 	writer.Header().Set("X-N0ding-Cache", "HIT")
 	writer.Header().Set("Age", strconv.FormatInt(int64(time.Since(entry.Metadata.StoredAt).Seconds()), 10))
 	writer.Header().Set("Content-Length", strconv.FormatInt(entry.Metadata.ContentBytes, 10))
@@ -200,7 +202,7 @@ func (p *Proxy) serveMiss(
 		p.fail(writer, request, http.StatusBadGateway, "could not create upstream request", err)
 		return
 	}
-	copyRequestHeader(upstreamRequest.Header, request.Header, p.forwardAuthorization)
+	httppolicy.ForwardRequestHeaders(upstreamRequest.Header, request.Header, p.forwardAuthorization)
 	upstreamRequest.Header.Set("Accept-Encoding", "identity")
 
 	response, err := p.client.Do(upstreamRequest)
@@ -214,24 +216,39 @@ func (p *Proxy) serveMiss(
 	}
 	defer response.Body.Close()
 
-	headers := filteredHeader(response.Header)
+	headers := httppolicy.ResponseHeaders(response.Header)
+	headers.Del("Content-Encoding")
 	headers.Set("X-N0ding-Cache", "MISS")
-	cacheable = cacheable && request.Method == http.MethodGet && response.StatusCode == http.StatusOK
+	cacheable = cacheable &&
+		request.Method == http.MethodGet &&
+		response.StatusCode == http.StatusOK &&
+		httppolicy.ResponseAllowsStorage(
+			request.Header,
+			response.Header,
+			"Accept",
+			"Accept-Encoding",
+		)
+	cacheHeaders := httppolicy.CacheMetadataHeaders(headers)
 
 	if isJSON(response.Header.Get("Content-Type")) {
-		p.serveMetadata(writer, request, response, headers, key, cacheable)
+		p.serveMetadata(writer, request, response, headers, cacheHeaders, key, cacheable)
 		return
 	}
 
-	copyHeader(writer.Header(), headers)
+	httppolicy.CopyHeaders(writer.Header(), headers)
 	writer.WriteHeader(response.StatusCode)
 	if request.Method == http.MethodHead {
 		return
 	}
 	if cacheable {
-		metadata := cache.Metadata{Status: response.StatusCode, Header: headers}
+		metadata := cache.Metadata{Status: response.StatusCode, Header: cacheHeaders}
 		if err := p.store.PutStream(key, metadata, response.Body, writer); err != nil {
-			p.logger.Warn("cache stream failed", "repository", p.name, "url", target.Redacted(), "error", err)
+			p.logger.Warn(
+				"cache stream failed",
+				"repository", p.name,
+				"upstream", httppolicy.PublicUpstreamURL(target),
+				"error", err,
+			)
 		}
 		return
 	}
@@ -245,6 +262,7 @@ func (p *Proxy) serveMetadata(
 	request *http.Request,
 	response *http.Response,
 	headers http.Header,
+	cacheHeaders http.Header,
 	key string,
 	cacheable bool,
 ) {
@@ -256,13 +274,14 @@ func (p *Proxy) serveMetadata(
 	if len(body) <= maxMetadataBytes {
 		body = bytes.ReplaceAll(body, []byte(strings.TrimRight(p.upstream.String(), "/")), []byte(p.proxyBaseURL))
 		headers.Set("Content-Length", strconv.Itoa(len(body)))
+		cacheHeaders.Set("Content-Length", strconv.Itoa(len(body)))
 		if cacheable {
-			metadata := cache.Metadata{Status: response.StatusCode, Header: headers}
+			metadata := cache.Metadata{Status: response.StatusCode, Header: cacheHeaders}
 			if err := p.store.PutBytes(key, metadata, body); err != nil {
 				p.logger.Warn("cache metadata failed", "repository", p.name, "error", err)
 			}
 		}
-		copyHeader(writer.Header(), headers)
+		httppolicy.CopyHeaders(writer.Header(), headers)
 		writer.WriteHeader(response.StatusCode)
 		if request.Method != http.MethodHead {
 			_, _ = writer.Write(body)
@@ -272,7 +291,7 @@ func (p *Proxy) serveMetadata(
 
 	p.logger.Warn("metadata exceeds rewrite limit", "repository", p.name, "limit_bytes", maxMetadataBytes)
 	headers.Del("Content-Length")
-	copyHeader(writer.Header(), headers)
+	httppolicy.CopyHeaders(writer.Header(), headers)
 	writer.WriteHeader(response.StatusCode)
 	if request.Method != http.MethodHead {
 		_, _ = io.Copy(writer, io.MultiReader(bytes.NewReader(body), response.Body))
@@ -281,7 +300,13 @@ func (p *Proxy) serveMetadata(
 
 func (p *Proxy) fail(writer http.ResponseWriter, request *http.Request, status int, message string, err error) {
 	p.stats.errors.Add(1)
-	p.logger.Error(message, "repository", p.name, "method", request.Method, "path", request.URL.Path, "error", err)
+	p.logger.Error(
+		message,
+		"repository", p.name,
+		"method", request.Method,
+		"path", request.URL.Path,
+		"error", httppolicy.SafeError(err),
+	)
 	http.Error(writer, message, status)
 }
 
@@ -291,59 +316,6 @@ func isJSON(contentType string) bool {
 		return strings.Contains(strings.ToLower(contentType), "json")
 	}
 	return mediaType == "application/json" || strings.HasSuffix(mediaType, "+json")
-}
-
-func filteredHeader(source http.Header) http.Header {
-	target := make(http.Header)
-	copyHeader(target, source)
-	for _, name := range hopByHopHeaders {
-		target.Del(name)
-	}
-	target.Del("Content-Encoding")
-	return target
-}
-
-func copyHeader(target, source http.Header) {
-	for name, values := range source {
-		target.Del(name)
-		for _, value := range values {
-			target.Add(name, value)
-		}
-	}
-}
-
-func copyRequestHeader(target, source http.Header, forwardAuthorization bool) {
-	for name, values := range source {
-		if isHopByHop(name) || strings.EqualFold(name, "Host") {
-			continue
-		}
-		if !forwardAuthorization && strings.EqualFold(name, "Authorization") {
-			continue
-		}
-		for _, value := range values {
-			target.Add(name, value)
-		}
-	}
-}
-
-func isHopByHop(name string) bool {
-	for _, blocked := range hopByHopHeaders {
-		if strings.EqualFold(name, blocked) {
-			return true
-		}
-	}
-	return false
-}
-
-var hopByHopHeaders = []string{
-	"Connection",
-	"Keep-Alive",
-	"Proxy-Authenticate",
-	"Proxy-Authorization",
-	"TE",
-	"Trailer",
-	"Transfer-Encoding",
-	"Upgrade",
 }
 
 type keyedLocker struct {

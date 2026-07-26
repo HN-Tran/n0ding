@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/HN-Tran/n0ding/internal/httppolicy"
 )
 
 type Store struct {
@@ -152,6 +154,7 @@ func (s *Store) PutStreamVerified(
 
 	metadata.StoredAt = s.now().UTC()
 	metadata.ContentBytes = written
+	metadata.Header = httppolicy.CacheMetadataHeaders(metadata.Header)
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
 		return fmt.Errorf("encode cache metadata: %w", err)

@@ -18,7 +18,7 @@ implicitly supported.
 | OCI | Podman | image pull | Unknown | `podman version` was unavailable on the Windows test host |
 | OCI | Docker/Podman | private registry pull | Not verified | Auth/security follow-up |
 | OCI | Docker/Podman | image push | Not implemented | Explicit non-goal for this spike |
-| PyPI | pip/uv | package install | Not implemented | Excluded from the read-only MVP |
+| PyPI | pip/uv | package install | Not implemented | Planned only after the private [PyPI design gate](pypi-design.md) |
 
 Automated tests also exercise the same HTTP behavior against an in-process
 upstream. The real-client check used Node.js 24.18.0 LTS with npm 11.16.0 and
@@ -249,8 +249,8 @@ occurred. The forced process kill left seven `.body-*` temporary files.
   unknown.
 - Range responses are pass-through only. n0ding has no sparse/partial blob
   cache and Docker 29.6.2 did not use Range for the tested resume.
-- An ungraceful process kill can leave `.body-*` temporary files; startup
-  scavenging is not implemented.
+- An ungraceful process kill can leave `.body-*` temporary files. Later MVP
+  hardening added startup cleanup once they exceed `storage.stale_temp_age`.
 - A cache hit still performs an upstream authorization/digest `HEAD`, so the
   OCI cache is not an offline registry.
 - Cache keys include the client's `Accept` header, which can retain multiple
@@ -425,3 +425,68 @@ busybox:1.36      sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e
 
 The revalidation environment was removed after the measurement. Podman remains
 unavailable on this host.
+
+## v0.1-private shared-cache safety revalidation
+
+Revalidated 2026-07-26 after introducing the shared HTTP/cache policy.
+
+The first real npm run exposed an important compatibility requirement:
+`registry.npmjs.org` explicitly returned `Cache-Control: public` while
+Cloudflare also attached a `Set-Cookie` edge cookie. n0ding now permits storage
+only because the response is explicitly public, while stripping the cookie
+from persistent metadata. Cookie-bearing responses without `public`, and all
+`private`, `no-store`, or `no-cache` responses, remain non-cacheable.
+
+Focused automated tests additionally prove:
+
+- npm does not forward client cookies or OTP headers;
+- npm forwards `Authorization` only when configured and never caches that
+  authenticated request;
+- OCI forwards its required `Authorization` header but not client cookies;
+- private or credential-bearing responses are fetched twice and create zero
+  cache objects;
+- unsupported `Vary` fields and `Vary: *` prevent storage;
+- cache metadata strips cookie/authentication fields even if an adapter passes
+  them to the store;
+- status output removes upstream URL userinfo, query, and fragment.
+
+### npm real-client result
+
+Client: npm 11.16.0. The committed scoped-package/lockfile fixture was installed
+twice with separate empty npm client caches. n0ding restarted between runs and
+retained only its isolated Docker volume.
+
+| Measurement | First clean client | Second clean client after restart |
+|---|---:|---:|
+| Cache hits | 0 | 5 |
+| Cache misses | 5 | 0 |
+| Complete objects | 5 | 5 |
+| Storage bytes | 13,956,353 | 13,956,353 |
+| Packages installed | 3 | 3 |
+
+Result: scoped metadata, rewritten tarball URLs, lockfile SHA-512 integrity,
+public edge-cookie handling, and persistent cache reuse all passed.
+
+### OCI real-client result
+
+Client: two separate `docker:29-dind` daemons on Docker Desktop Engine 29.5.3.
+Image: `library/alpine:3.20`, platform `linux/amd64`. Both n0ding and the Docker
+daemon restarted while the isolated n0ding volume was retained.
+
+| Measurement | First clean daemon | Second clean daemon after restart |
+|---|---:|---:|
+| Cache hits | 0 | 8 |
+| Cache misses | 11 | 3 |
+| Complete objects | 8 | 8 |
+| Storage bytes | 3,721,009 | 3,721,009 |
+
+Both pulls produced:
+
+```text
+sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+```
+
+The unchanged object/byte counts and matching digest show that the new
+credential/header policy did not break OCI cache persistence or integrity.
+All temporary containers, networks, volumes, and npm client directories were
+removed after the measurement.

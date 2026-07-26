@@ -24,9 +24,9 @@ available, contact the repository owner through a private channel listed on
 their GitHub profile and ask for a secure reporting channel before sending
 details.
 
-Repository owner release gate: before announcing v0.1.0 publicly, confirm that
-at least one monitored private reporting path above is available and replace
-this paragraph when a permanent security contact is established.
+There is no public v0.1 launch planned. Before any future public announcement,
+confirm that at least one monitored private reporting path above is available
+and replace this paragraph when a permanent security contact is established.
 
 A useful report includes:
 
@@ -45,6 +45,15 @@ a best-effort basis.
 - OCI Bearer credentials are forwarded to the configured upstream. A cached OCI
   response is served only after the upstream authorizes the same request with a
   `HEAD` response.
+- Cookies, proxy credentials, npm OTP fields, forwarded identity headers, and
+  Docker registry-auth transport headers are not forwarded upstream.
+- Private/no-store/no-cache, authentication-metadata, and unsupported-`Vary`
+  responses are not persisted. Cookie-bearing responses require explicit
+  `Cache-Control: public`; cookie fields and other known sensitive headers are
+  scrubbed again at the storage boundary.
+- Status and explicit upstream/error URL log fields remove userinfo, query, and
+  fragment. Secrets placed in config still exist in the file and process
+  memory; arbitrary paths and error strings are not a supported secret store.
 - Cached content is trusted as received from the configured upstream.
 - OCI manifests and blobs are SHA-256 verified before cache commit.
 - There is no malware, signature, provenance, or vulnerability scanning.
@@ -53,4 +62,5 @@ a best-effort basis.
 - The local cache supports one n0ding process, not shared-volume writers.
 
 Bind n0ding to a trusted interface, terminate TLS at a trusted reverse proxy,
-and review [docs/operations.md](docs/operations.md) before deployment.
+and review [docs/operations.md](docs/operations.md) and the
+[threat model](docs/threat-model.md) before deployment.

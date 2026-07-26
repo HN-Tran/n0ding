@@ -1,8 +1,9 @@
 # Operations guide
 
-The read-only MVP is one process, one configuration file, and one local
-filesystem cache. Run exactly one n0ding process against a cache directory;
-shared-volume multi-writer operation is unsupported.
+The `v0.1-private` read-only hardening baseline is one process, one
+configuration file, and one local filesystem cache. Run exactly one n0ding
+process against a cache directory; shared-volume multi-writer operation is
+unsupported.
 
 For failure symptoms and diagnostic commands, see
 [the troubleshooting guide](troubleshooting.md).

@@ -4,9 +4,10 @@
 > artifacts, built for homelabs and small technical teams.
 
 > [!WARNING]
-> **v0.1.0 is a preview release.** It is intended for evaluation on trusted
-> networks. It has not completed the security, recovery, or long-running
-> reliability work required for a production supply-chain service.
+> **v0.1 is a private hardening phase, not a public release.** It is intended
+> for evaluation on trusted networks. It has not completed the security,
+> recovery, or long-running reliability work required for a production
+> supply-chain service.
 
 ## What n0ding is
 
@@ -17,8 +18,8 @@
   required.
 - Config-first, Docker Compose-friendly, observable through health, JSON status,
   and Prometheus-compatible metrics endpoints.
-- Deliberately narrow: read-only npm and OCI are the complete v0.1.0 protocol
-  scope.
+- Deliberately narrow today: read-only npm and OCI are the implemented protocol
+  scope. PyPI is planned only after its design and private-auth gates close.
 
 ## What n0ding is not
 
@@ -28,7 +29,8 @@
 - Not an authentication, user-management, RBAC, scanning, signing, or policy
   system.
 - Not a replacement for a production-grade artifact manager.
-- Not a supported PyPI, Maven, NuGet, Helm, or general artifact cache.
+- Not yet a supported PyPI cache, and not a Maven, NuGet, Helm, or general
+  artifact cache.
 
 ## Quickstart with Docker Compose
 
@@ -155,6 +157,9 @@ The complete field and retention semantics are documented in the
 - There is no private publish support.
 - There is no n0ding client authentication, user management, or RBAC; only the
   existing upstream credential handling is present.
+- Real private-upstream workflows and credential revocation are not yet
+  validated.
+- PyPI is a design gate, not an implemented adapter.
 - Podman has not yet been tested.
 - Range requests are proxied, but partial responses are not cached.
 - Retention is based on maximum object age, not LRU or a strict byte quota.
@@ -176,10 +181,11 @@ go build -trimpath -o dist/n0ding ./cmd/n0ding
 go run ./cmd/n0ding -config config/n0ding.local.toml
 ```
 
-The [architecture](docs/architecture.md), [MVP readiness
-scorecard](docs/spike-scorecard.md), and [release
-checklist](docs/release-checklist.md) describe the current boundaries and
-evidence.
+The [architecture](docs/architecture.md), [baseline
+scorecard](docs/spike-scorecard.md), [threat model](docs/threat-model.md), and
+[v0.1-private roadmap](docs/release-checklist.md) describe the current
+boundaries and evidence. The [PyPI design gate](docs/pypi-design.md) records
+decisions that must be made before implementation.
 
 ## Security and license
 

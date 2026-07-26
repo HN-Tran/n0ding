@@ -12,9 +12,10 @@ Good v0.1.x contributions include:
 - operating and troubleshooting documentation;
 - reproducible client compatibility results.
 
-UI work, publishing, user management, RBAC, PyPI, new registry ecosystems,
-database storage, and broad dependency additions are out of scope until the
-documented release gates are revisited.
+UI work, publishing, user management, RBAC, unrelated registry ecosystems,
+database storage, and broad dependency additions are out of scope. PyPI work
+must first resolve the committed design gates and may not bypass the shared
+HTTP/cache safety policy.
 
 Security vulnerabilities must follow [SECURITY.md](SECURITY.md), not the public
 issue tracker.
