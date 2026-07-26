@@ -14,6 +14,11 @@ All notable changes to n0ding are documented in this file. The project follows
 - Removed upstream URL userinfo, query, and fragment from status and explicit
   upstream/error URL log fields.
 - Added focused negative tests and an initial threat model.
+- Added two-identity npm and OCI fixtures with raw-cache credential canaries.
+- Required an exact, non-empty upstream digest before an OCI cached object can
+  be served to the current identity.
+- Limited credential forwarding across redirects to the exact same origin;
+  cross-origin redirects continue without client credentials.
 
 ### Documentation
 

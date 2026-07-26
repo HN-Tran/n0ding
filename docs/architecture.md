@@ -129,11 +129,19 @@ and `Vary` dimensions outside the adapter's cache key. Cookie-bearing responses
 must be explicitly public, and the cache store still strips their cookie fields
 before writing JSON metadata.
 
+Both adapters use the same redirect policy. `Authorization` is retained only
+when the redirect keeps the exact scheme, host, and effective port. A
+cross-origin redirect remains usable for registry/CDN downloads but proceeds
+without client credentials. Unsupported cookie, OTP, proxy, forwarded-identity,
+and Docker auth-transport headers remain stripped on every redirect.
+
 OCI is the exception because Registry V2 pulls require Bearer tokens. n0ding
 forwards those tokens but does not store them. Before serving an OCI cache hit,
 it sends an upstream `HEAD` request with the current token. A cached object is
-served only when the upstream confirms access. This retains upstream dependency
-for authorization while keeping manifest and layer bytes local.
+served only when that response is successful and carries the exact, non-empty
+cached digest. Missing or different digest confirmation forces a fresh
+upstream `GET`. This retains upstream dependency for authorization while
+keeping content-addressed manifest and layer bytes local.
 
 TLS and user authentication should terminate at a trusted reverse proxy until a
 unified auth layer exists.
@@ -155,10 +163,11 @@ These are MVP boundaries.
 
 ## Next architecture gate
 
-The next slice is explicit private-upstream credential design and canary
-testing, not another protocol adapter. Recovery, soak, real-client/TLS, and
-PyPI work then follow the ordered
-[v0.1-private roadmap](release-checklist.md).
+The fixture-level identity and redirect slice is complete. The next
+architecture gate is a real private npm and OCI upstream drill with two
+identities, denied access, revocation, redirect observation, and credential
+canary scans. Recovery, soak, real-client/TLS, and PyPI work then follow the
+ordered [v0.1-private roadmap](release-checklist.md).
 
 PyPI has a separate [design gate](pypi-design.md). Private publishing remains
 outside the read-only architecture.

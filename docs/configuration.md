@@ -112,6 +112,11 @@ is fixed at `/v2/`.
 - OCI forwards `Authorization` because Registry V2 pulls require it. Cookies,
   proxy credentials, npm OTP fields, forwarded identity headers, and Docker
   registry-auth transport headers are stripped for both adapters.
+- On redirects, `Authorization` is retained only for the exact same scheme,
+  host, and effective port. Cross-origin registry/CDN redirects remain allowed
+  but receive no client credentials; redirect URL userinfo is discarded.
+- An OCI cache hit requires a successful upstream `HEAD` with the exact cached
+  digest. A missing or different digest forces an upstream miss.
 - Responses marked `private`, `no-store`, or `no-cache`, responses carrying
   authentication metadata, and responses with unsupported `Vary` dimensions
   are not cached. Cookie-bearing responses require explicit
@@ -123,5 +128,8 @@ is fixed at `/v2/`.
   the file until the private-upstream secret-input design is complete.
 
 Cookie, OTP, proxy, and arbitrary custom-header authentication are unsupported.
+Client `Authorization` forwarding is the only fixture-tested private npm input;
+OCI fixture coverage currently uses Bearer tokens. Basic-auth and real private
+upstreams remain unverified.
 See the [threat model](threat-model.md) and
 [private roadmap](release-checklist.md).

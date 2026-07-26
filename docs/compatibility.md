@@ -490,3 +490,39 @@ The unchanged object/byte counts and matching digest show that the new
 credential/header policy did not break OCI cache persistence or integrity.
 All temporary containers, networks, volumes, and npm client directories were
 removed after the measurement.
+
+## v0.1-private identity-safety fixtures
+
+Validated 2026-07-26 with in-process private-upstream fixtures. These tests are
+policy evidence, not real private-registry compatibility claims.
+
+Commands:
+
+```sh
+go test -count=1 -run 'TestAuthorizedNPMIdentities|TestCrossOriginRedirect|TestProxyFailure' ./internal/npmproxy
+go test -count=1 -run 'TestPrivateOCIIdentities|TestOCICacheHitRequires|TestDeniedToken' ./internal/ociproxy
+go test -count=1 -run 'TestClientWithSafeRedirects|TestPublicUpstreamURL|TestSafeError' ./internal/httppolicy
+go test -count=1 -run TestStatusRedactsUpstreamCredentialComponents ./internal/httpserver
+```
+
+Results:
+
+- npm identity A, identity B, identity A again, and a denied identity all
+  reached the fixture independently, returned `MISS`, and left zero persistent
+  cache objects;
+- each npm identity received only its own body;
+- OCI identities with different tag digests never received the other
+  identity's manifest; a missing `Docker-Content-Digest` on authorization
+  `HEAD` also forced a fresh `GET`;
+- the existing same-digest OCI fixture still permits a hit for another
+  authorized identity after exact digest confirmation;
+- raw cache files contained none of the request token or query canaries;
+- configured URL userinfo/query canaries were absent from status, proxy failure
+  logs, and client-visible proxy errors;
+- `Authorization` survived only exact-origin redirects. Cross-origin redirects
+  remained usable without it, while cookie, OTP, proxy, forwarded-identity, and
+  Docker auth-transport headers stayed stripped.
+
+Still unproven: real private npm/OCI products, Basic auth, token refresh and
+revocation, identity-provider behavior, registry/CDN redirect chains, and
+operator backup/log canary scans.

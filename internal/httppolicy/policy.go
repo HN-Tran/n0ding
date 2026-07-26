@@ -7,6 +7,45 @@ import (
 	"strings"
 )
 
+// ClientWithSafeRedirects returns a shallow client copy that retains
+// credentials only across redirects to the exact same origin. Redirects to a
+// different scheme, host, or effective port remain allowed for registry/CDN
+// compatibility, but continue without client credentials.
+func ClientWithSafeRedirects(client *http.Client) *http.Client {
+	if client == nil {
+		client = &http.Client{}
+	}
+	secured := *client
+	previousCheck := client.CheckRedirect
+	secured.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+		sanitizeRedirectRequest(request, via)
+		if previousCheck != nil {
+			if err := previousCheck(request, via); err != nil {
+				return err
+			}
+			// A caller-supplied redirect hook cannot weaken the shared policy.
+			sanitizeRedirectRequest(request, via)
+			return nil
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &secured
+}
+
+func sanitizeRedirectRequest(request *http.Request, via []*http.Request) {
+	hasUserinfo := request.URL != nil && request.URL.User != nil
+	if hasUserinfo {
+		request.URL.User = nil
+	}
+	stripBlockedRequestHeaders(request.Header)
+	if hasUserinfo || len(via) == 0 || !sameOrigin(via[len(via)-1].URL, request.URL) {
+		stripAuthorizationHeader(request.Header)
+	}
+}
+
 // CopyHeaders replaces target values with a copy of source values.
 func CopyHeaders(target, source http.Header) {
 	for name, values := range source {
@@ -234,6 +273,46 @@ func blockedRequestHeader(name string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func stripBlockedRequestHeaders(header http.Header) {
+	for name := range header {
+		canonical := http.CanonicalHeaderKey(name)
+		if blockedRequestHeader(canonical) {
+			delete(header, name)
+		}
+	}
+}
+
+func stripAuthorizationHeader(header http.Header) {
+	for name := range header {
+		if http.CanonicalHeaderKey(name) == "Authorization" {
+			delete(header, name)
+		}
+	}
+}
+
+func sameOrigin(left, right *url.URL) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	return strings.EqualFold(left.Scheme, right.Scheme) &&
+		strings.EqualFold(left.Hostname(), right.Hostname()) &&
+		effectivePort(left) == effectivePort(right)
+}
+
+func effectivePort(value *url.URL) string {
+	if port := value.Port(); port != "" {
+		return port
+	}
+	switch strings.ToLower(value.Scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
 	}
 }
 

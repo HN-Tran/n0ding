@@ -8,6 +8,128 @@ import (
 	"testing"
 )
 
+func TestClientWithSafeRedirectsRetainsCredentialsOnlyForExactOrigin(t *testing.T) {
+	original := &http.Request{URL: mustParseURL(t, "https://registry.example.test/v2/image/blobs/sha256:one")}
+	tests := []struct {
+		name              string
+		target            string
+		wantAuthorization bool
+	}{
+		{
+			name:              "same origin with explicit default port",
+			target:            "https://registry.example.test:443/storage/blob",
+			wantAuthorization: true,
+		},
+		{
+			name:   "subdomain",
+			target: "https://cdn.registry.example.test/storage/blob",
+		},
+		{
+			name:   "scheme change",
+			target: "http://registry.example.test/storage/blob",
+		},
+		{
+			name:   "port change",
+			target: "https://registry.example.test:8443/storage/blob",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			redirect := &http.Request{
+				URL: mustParseURL(t, test.target),
+				Header: http.Header{
+					"Authorization":   {"Bearer redirect-canary"},
+					"Cookie":          {"session=redirect-canary"},
+					"X-Registry-Auth": {"redirect-canary"},
+				},
+			}
+			client := ClientWithSafeRedirects(&http.Client{})
+			if err := client.CheckRedirect(redirect, []*http.Request{original}); err != nil {
+				t.Fatal(err)
+			}
+			if got := redirect.Header.Get("Authorization"); (got != "") != test.wantAuthorization {
+				t.Fatalf("Authorization = %q", got)
+			}
+			if got := redirect.Header.Get("Cookie"); got != "" {
+				t.Fatalf("Cookie forwarded as %q", got)
+			}
+			if got := redirect.Header.Get("X-Registry-Auth"); got != "" {
+				t.Fatalf("X-Registry-Auth forwarded as %q", got)
+			}
+		})
+	}
+}
+
+func TestClientWithSafeRedirectsRejectsRedirectUserinfoAsCredentials(t *testing.T) {
+	original := &http.Request{URL: mustParseURL(t, "https://registry.example.test/v2/")}
+	redirect := &http.Request{
+		URL: mustParseURL(t, "https://redirect-user:redirect-password@registry.example.test/v2/private"),
+		Header: http.Header{
+			"Authorization": {"Basic redirect-userinfo-canary"},
+		},
+	}
+	client := ClientWithSafeRedirects(&http.Client{})
+	if err := client.CheckRedirect(redirect, []*http.Request{original}); err != nil {
+		t.Fatal(err)
+	}
+	if redirect.URL.User != nil {
+		t.Fatalf("redirect userinfo retained as %q", redirect.URL.User.String())
+	}
+	if got := redirect.Header.Get("Authorization"); got != "" {
+		t.Fatalf("redirect userinfo authorization retained as %q", got)
+	}
+}
+
+func TestClientWithSafeRedirectsPreservesCallerPolicy(t *testing.T) {
+	expected := errors.New("caller rejected redirect")
+	called := false
+	client := ClientWithSafeRedirects(&http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			called = true
+			return expected
+		},
+	})
+	redirect := &http.Request{
+		URL:    mustParseURL(t, "https://other.example.test/"),
+		Header: http.Header{"Authorization": {"Bearer canary"}},
+	}
+	err := client.CheckRedirect(
+		redirect,
+		[]*http.Request{{URL: mustParseURL(t, "https://registry.example.test/")}},
+	)
+	if !errors.Is(err, expected) {
+		t.Fatalf("redirect error = %v", err)
+	}
+	if !called {
+		t.Fatal("caller redirect policy was not called")
+	}
+	if got := redirect.Header.Get("Authorization"); got != "" {
+		t.Fatalf("caller saw unsafe authorization %q", got)
+	}
+
+	client = ClientWithSafeRedirects(&http.Client{
+		CheckRedirect: func(request *http.Request, _ []*http.Request) error {
+			request.Header["authorization"] = []string{"Bearer callback-canary"}
+			return nil
+		},
+	})
+	redirect = &http.Request{
+		URL:    mustParseURL(t, "https://other.example.test/"),
+		Header: make(http.Header),
+	}
+	if err := client.CheckRedirect(
+		redirect,
+		[]*http.Request{{URL: mustParseURL(t, "https://registry.example.test/")}},
+	); err != nil {
+		t.Fatal(err)
+	}
+	for name, values := range redirect.Header {
+		if strings.EqualFold(name, "Authorization") {
+			t.Fatalf("caller redirect policy restored unsafe %s %#v", name, values)
+		}
+	}
+}
+
 func TestForwardRequestHeadersEnforcesCredentialBoundary(t *testing.T) {
 	source := http.Header{
 		"Accept":           {"application/json"},
@@ -196,4 +318,13 @@ func TestSafeErrorRemovesRequestURL(t *testing.T) {
 			t.Fatalf("safe error leaked %q: %q", secret, got)
 		}
 	}
+}
+
+func mustParseURL(t *testing.T, value string) *url.URL {
+	t.Helper()
+	parsed, err := url.Parse(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed
 }

@@ -1,12 +1,15 @@
 package ociproxy
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -337,6 +340,137 @@ func TestDeniedTokenCannotUseCachedObject(t *testing.T) {
 	}
 }
 
+func TestPrivateOCIIdentitiesCannotReceiveAnotherIdentityDigest(t *testing.T) {
+	bodyA := []byte(`{"schemaVersion":2,"identity":"A"}`)
+	bodyB := []byte(`{"schemaVersion":2,"identity":"B"}`)
+	digestA := digestOf(bodyA)
+	digestB := digestOf(bodyB)
+	var getRequests atomic.Int64
+	var headRequests atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		authorization := request.Header.Get("Authorization")
+		var body []byte
+		var digest string
+		switch authorization {
+		case "Bearer identity-a-canary":
+			body, digest = bodyA, digestA
+		case "Bearer identity-b-canary":
+			body, digest = bodyB, digestB
+		default:
+			if request.Method == http.MethodHead {
+				headRequests.Add(1)
+			} else {
+				getRequests.Add(1)
+			}
+			http.Error(writer, "denied", http.StatusForbidden)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+		writer.Header().Set("Docker-Content-Digest", digest)
+		if request.Method == http.MethodHead {
+			headRequests.Add(1)
+			return
+		}
+		getRequests.Add(1)
+		_, _ = writer.Write(body)
+	}))
+	defer upstream.Close()
+
+	cacheDirectory := t.TempDir()
+	proxy := newTestProxy(t, upstream.URL, cacheDirectory)
+	path := "/v2/private/image/manifests/latest?access_token=query-canary"
+	tests := []struct {
+		authorization string
+		status        int
+		body          string
+	}{
+		{"Bearer identity-a-canary", http.StatusOK, string(bodyA)},
+		{"Bearer identity-b-canary", http.StatusOK, string(bodyB)},
+		{"Bearer identity-a-canary", http.StatusOK, string(bodyA)},
+		{"Bearer denied-identity-canary", http.StatusForbidden, "denied\n"},
+	}
+	for attempt, test := range tests {
+		response := performRequest(proxy, http.MethodGet, path, test.authorization)
+		if response.Code != test.status ||
+			response.Body.String() != test.body ||
+			response.Header().Get("X-N0ding-Cache") != "MISS" {
+			t.Fatalf(
+				"attempt %d: status=%d cache=%q body=%q",
+				attempt+1,
+				response.Code,
+				response.Header().Get("X-N0ding-Cache"),
+				response.Body.String(),
+			)
+		}
+	}
+	// A rejected candidate is checked once before and once after acquiring the
+	// same-key lock, in case another request replaced it while this one waited.
+	if getRequests.Load() != int64(len(tests)) || headRequests.Load() != 2*int64(len(tests)-1) {
+		t.Fatalf("upstream requests: GET=%d HEAD=%d", getRequests.Load(), headRequests.Load())
+	}
+	if objects := proxy.Snapshot().CacheObjects; objects != 1 {
+		t.Fatalf("cache objects = %d", objects)
+	}
+	assertOCICacheExcludesCanaries(
+		t,
+		cacheDirectory,
+		"identity-a-canary",
+		"identity-b-canary",
+		"denied-identity-canary",
+		"query-canary",
+	)
+}
+
+func TestOCICacheHitRequiresUpstreamDigestConfirmation(t *testing.T) {
+	bodyA := []byte(`{"schemaVersion":2,"identity":"A"}`)
+	bodyB := []byte(`{"schemaVersion":2,"identity":"B"}`)
+	digestA := digestOf(bodyA)
+	digestB := digestOf(bodyB)
+	var getRequests atomic.Int64
+	var headRequests atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		identityB := request.Header.Get("Authorization") == "Bearer identity-b-canary"
+		body, digest := bodyA, digestA
+		if identityB {
+			body, digest = bodyB, digestB
+		}
+		writer.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+		if request.Method == http.MethodHead {
+			headRequests.Add(1)
+			if !identityB {
+				writer.Header().Set("Docker-Content-Digest", digest)
+			}
+			return
+		}
+		getRequests.Add(1)
+		writer.Header().Set("Docker-Content-Digest", digest)
+		_, _ = writer.Write(body)
+	}))
+	defer upstream.Close()
+
+	proxy := newTestProxy(t, upstream.URL, t.TempDir())
+	path := "/v2/private/image/manifests/latest"
+	first := performRequest(proxy, http.MethodGet, path, "Bearer identity-a-canary")
+	second := performRequest(proxy, http.MethodGet, path, "Bearer identity-b-canary")
+
+	if first.Code != http.StatusOK || first.Body.String() != string(bodyA) {
+		t.Fatalf("identity A response: status=%d body=%q", first.Code, first.Body.String())
+	}
+	if second.Code != http.StatusOK ||
+		second.Body.String() != string(bodyB) ||
+		second.Header().Get("X-N0ding-Cache") != "MISS" {
+		t.Fatalf(
+			"identity B response: status=%d cache=%q body=%q",
+			second.Code,
+			second.Header().Get("X-N0ding-Cache"),
+			second.Body.String(),
+		)
+	}
+	if getRequests.Load() != 2 || headRequests.Load() != 2 {
+		t.Fatalf("upstream requests: GET=%d HEAD=%d", getRequests.Load(), headRequests.Load())
+	}
+}
+
 func TestPrivateResponseIsNotCachedAndCookieIsNotForwarded(t *testing.T) {
 	body := []byte("private compressed OCI layer bytes")
 	digest := digestOf(body)
@@ -420,4 +554,29 @@ func performRequest(proxy *Proxy, method, path, authorization string) *httptest.
 func digestOf(body []byte) string {
 	sum := sha256.Sum256(body)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func assertOCICacheExcludesCanaries(t *testing.T, root string, canaries ...string) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		for _, canary := range canaries {
+			if bytes.Contains(content, []byte(canary)) {
+				t.Errorf("cache file %q contains credential canary %q", path, canary)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }

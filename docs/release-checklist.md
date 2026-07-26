@@ -55,17 +55,29 @@ This is the completed first private-hardening slice.
 
 - [ ] Choose an explicit secret-input model; do not silently normalize
   credentials embedded in ordinary config strings.
-- [ ] Define supported npm authentication schemes and cache partition/bypass
-  behavior.
+- [x] Define the current npm boundary: only client `Authorization` is forwarded
+  when enabled, and every such request bypasses persistent caching.
 - [ ] Define supported OCI token/basic-auth flows and authorization behavior
   for tags and digests.
-- [ ] Define redirect-origin rules and prove credentials are never forwarded to
-  an unapproved redirect target.
+- [x] Require a successful OCI authorization `HEAD` with the exact cached digest
+  before serving shared content-addressed bytes.
+- [x] Retain credentials only across exact-origin redirects; prove
+  cross-origin redirects continue without credentials and discard redirect
+  userinfo.
+- [x] Exercise npm and OCI fixtures with identity A, identity B, and denied
+  access; prove no identity receives another identity's private response.
+- [x] Scan fixture cache files, proxy failure logs, status, and client errors
+  for credential canaries.
 - [ ] Test one real private npm upstream with two identities and denied access.
 - [ ] Test one real private OCI upstream with two identities and denied access.
 - [ ] Prove logout/token revocation takes effect without a process restart.
-- [ ] Scan cache files, status output, metrics, and logs for test credentials.
-- [ ] Document which custom credential headers are unsupported.
+- [ ] Repeat the cache, status, metrics, log, and error canary scan against
+  those real private upstreams.
+- [x] Document which custom credential headers are unsupported.
+
+Fixture evidence and commands are recorded in
+[compatibility.md](compatibility.md). The fixture checks reduce implementation
+risk but do not count as real-registry or revocation evidence.
 
 ## 3. Retention, concurrency, and recovery
 
@@ -119,8 +131,9 @@ trustworthy:
   validation pass on the exact commit.
 - [ ] Real-client evidence is reproducible from committed commands.
 - [ ] A backup/restore drill and seven-day soak have passed.
-- [ ] Test credentials are absent from cache metadata, logs, metrics, status,
-  fixtures, and Git history.
+- [ ] No live or reusable test-environment credential appears in cache
+  metadata, logs, metrics, status, fixtures, or Git history; committed
+  credential-like strings are clearly fake canaries.
 - [ ] The threat model is reviewed and all critical risks are closed or
   explicitly accepted for private use.
 - [ ] README, compatibility matrix, configuration, security policy, and known

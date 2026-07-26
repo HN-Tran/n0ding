@@ -40,10 +40,10 @@ users who can modify it are outside the current integrity boundary.
 
 | ID | Threat | Current control | Remaining proof or gap |
 |---|---|---|---|
-| T1 | Client credential forwarded to the wrong upstream | Shared header policy strips cookies, proxy credentials, OTP, forwarded identity, and Docker auth-transport headers; `Authorization` needs adapter opt-in | Custom credential headers cannot be recognized automatically; supported private-auth schemes and redirect-origin behavior must be explicit and tested |
-| T2 | Credential persisted in cache metadata | Authentication metadata is rejected; cookie-bearing responses require explicit `public`; the storage layer scrubs known sensitive fields again | Scan real private-upstream cache files with canary credentials |
-| T3 | Credential exposed through status or logs | Status and explicit upstream/error URL fields omit userinfo, query, and fragment; request logs use paths, not authorization values | Structured-log canary scan still required because arbitrary error text and paths are not a secret store |
-| T4 | User-specific body reused for another client | npm authenticated requests bypass shared caching; private/no-store/no-cache and credential-bearing responses are not stored; OCI cache hits require upstream authorization and digest confirmation | Test two real identities and token revocation; OCI authenticated-body storage remains a deliberate sensitive boundary |
+| T1 | Client credential forwarded to the wrong upstream | Shared header policy strips unsupported identity headers; `Authorization` needs adapter opt-in and survives only exact-origin redirects; cross-origin redirects and redirect userinfo are credential-free | Real registry/CDN redirect behavior and supported private-auth schemes remain unverified |
+| T2 | Credential persisted in cache metadata | Authentication metadata is rejected; cookie-bearing responses require explicit `public`; the storage layer scrubs known sensitive fields again; raw fixture caches pass token/query canary scans | Repeat the raw scan against real private upstreams and backup output |
+| T3 | Credential exposed through status, errors, or logs | Status and explicit upstream/error URL fields omit userinfo, query, and fragment; fixture canaries pass structured-log and client-error scans | Arbitrary paths and nested non-URL error strings are not a secret store; real-upstream scan remains pending |
+| T4 | User-specific body reused for another client | npm authenticated requests bypass shared caching; two-identity fixtures create zero npm objects; OCI serves shared bytes only after exact current-identity digest confirmation, and differing/missing digests force a fresh `GET` | Test two real identities and token revocation; OCI authenticated content sharing remains a deliberate sensitive boundary |
 | T5 | Wrong representation reused because cache key is incomplete | Cache keys include target and `Accept`; responses varying on any other client-controlled dimension are not stored, except fixed upstream `Accept-Encoding: identity` | Extend the key only with evidence from a protocol adapter |
 | T6 | Partial or corrupt object committed | Atomic body/metadata commit, size check, OCI SHA-256 verification, temp cleanup | npm body integrity is ultimately enforced by npm/lockfile SRI, not independently by n0ding |
 | T7 | Malicious upstream poisons clients | Configured HTTPS upstream, OCI digest checks, npm client integrity where present | No signature, provenance, malware, or policy verification |
@@ -51,7 +51,7 @@ users who can modify it are outside the current integrity boundary.
 | T9 | Disk exhaustion or deletion races | Age-based GC deletes only complete objects and ignores active temps; store locking protects local commits | No strict byte quota; seven-day soak and forced-expiry test pending |
 | T10 | Backup captures inconsistent state or secrets | Documented stopped-service backup | Live restore drill and credential scan pending |
 | T11 | Multiple writers corrupt storage | Documented one-process/one-writable-cache rule | No distributed lock; deployment must enforce the rule |
-| T12 | SSRF through client-controlled target | Adapter constructs initial targets under one configured upstream; clients do not choose scheme or host | Path/query normalization and redirect-origin behavior require dedicated adversarial tests |
+| T12 | SSRF through client-controlled target | Adapter constructs initial targets under one configured upstream; redirect credentials are exact-origin only | Redirect destinations remain upstream-controlled and are not allowlisted; adversarial path/query and real redirect tests remain pending |
 
 ## Cache-admission policy
 
@@ -79,15 +79,22 @@ Until Section 2 of the [private roadmap](release-checklist.md) is complete:
 
 - npm `forward_authorization = false` remains the safe default;
 - enabling it forwards only the `Authorization` header and makes that request
-  bypass the shared npm cache;
+  bypass the shared npm cache; fixture identities A and B cannot populate or
+  consume a persistent private npm entry;
 - OCI forwards `Authorization` because the Registry V2 pull flow requires it,
-  never writes that header to cache metadata, and validates every hit upstream;
+  never writes that header to cache metadata, and validates every hit upstream
+  against the exact cached digest for the current identity;
 - cookie-based, OTP-based, proxy-based, and custom-header authentication are
   unsupported;
-- redirects use the Go client's current behavior; explicit redirect-origin and
-  credential-forwarding tests are required before private-upstream approval;
+- redirects retain `Authorization` only for the exact same scheme, host, and
+  effective port; cross-origin redirects remain allowed without client
+  credentials, and redirect userinfo is discarded;
 - credentials embedded in a configured URL remain present in the config and
   process memory even though status/log display is sanitized.
+
+The automated fixtures prove local policy behavior, not compatibility with a
+specific private npm service, OCI registry, identity provider, or token
+revocation flow.
 
 ## Review triggers
 

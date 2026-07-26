@@ -65,6 +65,7 @@ func New(options Options) (*Proxy, error) {
 	if options.Client == nil {
 		options.Client = &http.Client{Timeout: 5 * time.Minute}
 	}
+	options.Client = httppolicy.ClientWithSafeRedirects(options.Client)
 	if options.Logger == nil {
 		options.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}

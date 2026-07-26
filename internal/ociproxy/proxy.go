@@ -76,6 +76,7 @@ func New(options Options) (*Proxy, error) {
 	if options.Client == nil {
 		options.Client = &http.Client{Timeout: 15 * time.Minute}
 	}
+	options.Client = httppolicy.ClientWithSafeRedirects(options.Client)
 	if options.Logger == nil {
 		options.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -209,7 +210,9 @@ func (p *Proxy) authorizeCacheHit(request *http.Request, target *url.URL, cached
 		return false
 	}
 	upstreamDigest := response.Header.Get("Docker-Content-Digest")
-	return upstreamDigest == "" || cachedDigest == "" || strings.EqualFold(upstreamDigest, cachedDigest)
+	return upstreamDigest != "" &&
+		cachedDigest != "" &&
+		strings.EqualFold(upstreamDigest, cachedDigest)
 }
 
 func (p *Proxy) targetURL(requestURL *url.URL) (*url.URL, error) {

@@ -44,7 +44,11 @@ a best-effort basis.
 - npm upstream authorization is disabled by default.
 - OCI Bearer credentials are forwarded to the configured upstream. A cached OCI
   response is served only after the upstream authorizes the same request with a
-  `HEAD` response.
+  successful `HEAD` response carrying the exact cached digest. A missing or
+  different digest forces a fresh upstream `GET`.
+- Redirects may cross origins for registry/CDN compatibility, but client
+  credentials are retained only for the exact same scheme, host, and effective
+  port. Redirect URL userinfo is discarded.
 - Cookies, proxy credentials, npm OTP fields, forwarded identity headers, and
   Docker registry-auth transport headers are not forwarded upstream.
 - Private/no-store/no-cache, authentication-metadata, and unsupported-`Vary`
@@ -54,6 +58,9 @@ a best-effort basis.
 - Status and explicit upstream/error URL log fields remove userinfo, query, and
   fragment. Secrets placed in config still exist in the file and process
   memory; arbitrary paths and error strings are not a supported secret store.
+- Automated two-identity fixtures and credential canaries cover cache files,
+  proxy failure logs, status output, and client-visible proxy errors. Real
+  private registries and token revocation are not yet validated.
 - Cached content is trusted as received from the configured upstream.
 - OCI manifests and blobs are SHA-256 verified before cache commit.
 - There is no malware, signature, provenance, or vulnerability scanning.
