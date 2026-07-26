@@ -461,7 +461,7 @@ function Export-Volume {
         "--mount", "type=bind,src=$EvidenceRoot,dst=/evidence",
         $n0dingImage,
         "-c",
-        "set -eu; mkdir -p /evidence/$DirectoryName; cp -a /source/. /evidence/$DirectoryName/"
+        "set -eu; mkdir -p /evidence/$DirectoryName; cp -a /source/. /evidence/$DirectoryName/; chmod -R a+rX /evidence/$DirectoryName"
     )
 }
 
