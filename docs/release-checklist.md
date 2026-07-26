@@ -66,18 +66,25 @@ This is the completed first private-hardening slice.
   userinfo.
 - [x] Exercise npm and OCI fixtures with identity A, identity B, and denied
   access; prove no identity receives another identity's private response.
-- [x] Scan fixture cache files, proxy failure logs, status, and client errors
-  for credential canaries.
+- [x] Exercise the fixtures through the real n0ding server, revoke identities
+  without restarting it, and prove denied/revoked OCI identities cannot use
+  existing cached bytes.
+- [x] Scan fixture cache files, metadata, stopped cache copies, restored fixture
+  copies, proxy failure logs, status, metrics, and client errors for credential
+  canaries.
 - [ ] Test one real private npm upstream with two identities and denied access.
 - [ ] Test one real private OCI upstream with two identities and denied access.
-- [ ] Prove logout/token revocation takes effect without a process restart.
+- [ ] Prove real-provider logout/token revocation takes effect without a
+  process restart and record provider token TTL/propagation behavior.
 - [ ] Repeat the cache, status, metrics, log, and error canary scan against
   those real private upstreams.
 - [x] Document which custom credential headers are unsupported.
 
-Fixture evidence and commands are recorded in
-[compatibility.md](compatibility.md). The fixture checks reduce implementation
-risk but do not count as real-registry or revocation evidence.
+Fixture evidence is recorded in [compatibility.md](compatibility.md). The
+reproducible external procedure is
+[private-upstream-drill.md](private-upstream-drill.md). Deterministic local
+revocation reduces implementation risk but does not count as real-provider
+revocation or token-lifetime evidence.
 
 ## 3. Retention, concurrency, and recovery
 

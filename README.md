@@ -139,7 +139,10 @@ n0ding -config /etc/n0ding/n0ding.toml -check-config
 ```
 
 The complete field and retention semantics are documented in the
-[configuration reference](docs/configuration.md).
+[configuration reference](docs/configuration.md). A private-upstream
+compatibility run must follow the
+[disposable manual drill](docs/private-upstream-drill.md); do not put provider
+credentials into a committed config.
 
 ## Operational endpoints
 

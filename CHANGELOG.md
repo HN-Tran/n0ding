@@ -19,12 +19,18 @@ All notable changes to n0ding are documented in this file. The project follows
   be served to the current identity.
 - Limited credential forwarding across redirects to the exact same origin;
   cross-origin redirects continue without client credentials.
+- Added a deterministic full-server private-upstream drill covering two
+  identities, denied access, revocation, OCI digest authorization, redirects,
+  and credential-canary scans of cache and operator outputs.
 
 ### Documentation
 
 - Reframed v0.1 as a private hardening phase with no public launch.
 - Replaced the public release checklist with an ordered private-use roadmap.
 - Added a PyPI design gate instead of a partial implementation.
+- Added a disposable manual npm/OCI private-service drill, secret-free example
+  config, and streaming credential-canary scanner without claiming an external
+  provider run.
 
 ## [0.1.0] - Unreleased (private hardening baseline)
 

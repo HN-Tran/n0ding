@@ -1,0 +1,30 @@
+# Manual private-upstream drill configuration.
+#
+# This file contains no credential fields. Clients provide disposable
+# Authorization credentials at request time. All referenced environment
+# variables must be set before n0ding starts.
+
+[server]
+listen = ":8080"
+public_base_url = "${N0DING_PUBLIC_URL}"
+log_level = "info"
+
+[storage]
+path = "${N0DING_DRILL_CACHE_PATH}"
+max_age = "24h"
+gc_interval = "1h"
+stale_temp_age = "15m"
+
+[repository.npm]
+type = "npm"
+path = "/npm/"
+upstream = "${N0DING_NPM_UPSTREAM}"
+ttl = "5m"
+# Credentialed requests bypass persistent npm caching.
+forward_authorization = true
+
+[repository.oci]
+type = "oci"
+path = "/v2/"
+upstream = "${N0DING_OCI_UPSTREAM}"
+ttl = "5m"

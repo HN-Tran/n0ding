@@ -40,18 +40,18 @@ users who can modify it are outside the current integrity boundary.
 
 | ID | Threat | Current control | Remaining proof or gap |
 |---|---|---|---|
-| T1 | Client credential forwarded to the wrong upstream | Shared header policy strips unsupported identity headers; `Authorization` needs adapter opt-in and survives only exact-origin redirects; cross-origin redirects and redirect userinfo are credential-free | Real registry/CDN redirect behavior and supported private-auth schemes remain unverified |
-| T2 | Credential persisted in cache metadata | Authentication metadata is rejected; cookie-bearing responses require explicit `public`; the storage layer scrubs known sensitive fields again; raw fixture caches pass token/query canary scans | Repeat the raw scan against real private upstreams and backup output |
-| T3 | Credential exposed through status, errors, or logs | Status and explicit upstream/error URL fields omit userinfo, query, and fragment; fixture canaries pass structured-log and client-error scans | Arbitrary paths and nested non-URL error strings are not a secret store; real-upstream scan remains pending |
-| T4 | User-specific body reused for another client | npm authenticated requests bypass shared caching; two-identity fixtures create zero npm objects; OCI serves shared bytes only after exact current-identity digest confirmation, and differing/missing digests force a fresh `GET` | Test two real identities and token revocation; OCI authenticated content sharing remains a deliberate sensitive boundary |
+| T1 | Client credential forwarded to the wrong upstream | Shared header policy strips unsupported identity headers; `Authorization` needs adapter opt-in and survives only exact-origin redirects; full-server npm/OCI fixtures prove cross-origin and failing redirects are credential-free | Real registry/CDN redirect behavior and supported private-auth schemes remain unverified |
+| T2 | Credential persisted in cache metadata | Authentication metadata is rejected; cookie-bearing responses require explicit `public`; the storage layer scrubs known sensitive fields again; raw fixture caches, stopped copies, and restored copies pass token/userinfo/query canary scans | Repeat the raw scan against real private upstreams and an operational backup |
+| T3 | Credential exposed through status, errors, or logs | Status and explicit upstream/error URL fields omit userinfo, query, and fragment; the full-server drill scans status, metrics, structured logs, and client errors | Arbitrary paths and nested non-URL error strings are not a secret store; real-upstream scan remains pending |
+| T4 | User-specific body reused for another client | npm authenticated requests bypass shared caching; two-identity fixtures create zero npm objects; OCI serves shared bytes only after exact current-identity digest confirmation, differing/missing digests force a fresh `GET`, and local revocation blocks cached bytes without restart | Test two real identities and provider revocation; OCI authenticated content sharing remains a deliberate sensitive boundary |
 | T5 | Wrong representation reused because cache key is incomplete | Cache keys include target and `Accept`; responses varying on any other client-controlled dimension are not stored, except fixed upstream `Accept-Encoding: identity` | Extend the key only with evidence from a protocol adapter |
 | T6 | Partial or corrupt object committed | Atomic body/metadata commit, size check, OCI SHA-256 verification, temp cleanup | npm body integrity is ultimately enforced by npm/lockfile SRI, not independently by n0ding |
 | T7 | Malicious upstream poisons clients | Configured HTTPS upstream, OCI digest checks, npm client integrity where present | No signature, provenance, malware, or policy verification |
 | T8 | Unauthorized client reads private cache | No n0ding client authentication exists | Bind privately and enforce TLS/auth at a reverse proxy; private-use auth topology needs a drill |
 | T9 | Disk exhaustion or deletion races | Age-based GC deletes only complete objects and ignores active temps; store locking protects local commits | No strict byte quota; seven-day soak and forced-expiry test pending |
-| T10 | Backup captures inconsistent state or secrets | Documented stopped-service backup | Live restore drill and credential scan pending |
+| T10 | Backup captures inconsistent state or secrets | Documented stopped-service backup; deterministic stopped-copy/restore fixture passes credential scan and reuses authorized OCI bytes | Operational Compose backup/restore, duration, rollback, and real-output scan remain pending |
 | T11 | Multiple writers corrupt storage | Documented one-process/one-writable-cache rule | No distributed lock; deployment must enforce the rule |
-| T12 | SSRF through client-controlled target | Adapter constructs initial targets under one configured upstream; redirect credentials are exact-origin only | Redirect destinations remain upstream-controlled and are not allowlisted; adversarial path/query and real redirect tests remain pending |
+| T12 | SSRF through client-controlled target | Adapter constructs initial targets under one configured upstream; redirect credentials are exact-origin only; deterministic cross-origin success and failure redirects strip credentials | Redirect destinations remain upstream-controlled and are not allowlisted; real provider chains remain pending |
 
 ## Cache-admission policy
 
@@ -92,9 +92,11 @@ Until Section 2 of the [private roadmap](release-checklist.md) is complete:
 - credentials embedded in a configured URL remain present in the config and
   process memory even though status/log display is sanitized.
 
-The automated fixtures prove local policy behavior, not compatibility with a
-specific private npm service, OCI registry, identity provider, or token
-revocation flow.
+The automated full-server fixture also proves immediate local token revocation
+without a n0ding restart. It does not prove compatibility with a specific
+private npm service, OCI registry, identity provider, provider token
+revocation/expiry model, or Basic-auth challenge flow. The reproducible real
+service procedure is [private-upstream-drill.md](private-upstream-drill.md).
 
 ## Review triggers
 

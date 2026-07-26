@@ -523,6 +523,51 @@ Results:
   remained usable without it, while cookie, OTP, proxy, forwarded-identity, and
   Docker auth-transport headers stayed stripped.
 
-Still unproven: real private npm/OCI products, Basic auth, token refresh and
-revocation, identity-provider behavior, registry/CDN redirect chains, and
-operator backup/log canary scans.
+Still unproven in that adapter-only slice: real private npm/OCI products, Basic
+auth, provider token refresh/revocation, identity-provider behavior,
+registry/CDN redirect chains, and operator backup/log canary scans.
+
+### Deterministic full-server private-upstream drill
+
+Added 2026-07-26 as an end-to-end companion to the adapter tests:
+
+```sh
+go test -race -count=1 -run TestPrivateUpstreamDrill ./internal/httpserver
+```
+
+Unlike the earlier adapter-only fixtures, this test sends every client request
+through the real n0ding server wiring with both npm and OCI repositories
+enabled. It proves deterministically:
+
+- npm identities A and B receive only their own fixture body; denied and
+  revoked A fail; all eight credentialed requests are misses and create zero
+  npm cache objects;
+- OCI identity B receives a shared object only after its own successful
+  upstream `HEAD` returns the exact cached digest;
+- a changed digest and a missing `Docker-Content-Digest` each perform a fresh
+  identity-B `GET` instead of serving identity-A bytes;
+- denied and revoked OCI identity B cannot use existing cached bytes, while
+  still-authorized A can use the same cached object without restarting n0ding;
+- npm and OCI cross-origin redirects complete without forwarding
+  `Authorization`, including a deterministic proxy-failure redirect;
+- four complete OCI objects survive a stopped fixture cache copy; an authorized
+  OCI hit reuses the restored bytes from a fresh directory while revoked B is
+  still denied;
+- raw cache bodies/metadata, the stopped copy, restored copy, status, metrics,
+  structured logs, and client-visible proxy errors contain none of the fake
+  token, URL-userinfo, query, or authentication-response canaries.
+
+The stopped copy/restore is security and cache-reuse fixture coverage. It is
+not the pending Docker Compose operational backup/restore drill.
+
+### Real private services
+
+Status: **not run**. No external-service credential was available or used in
+this change, so the compatibility table still marks private OCI and real
+private-upstream behavior as unverified.
+
+The exact disposable setup, npm and Docker commands, provider revocation
+pause, expected signals, credential-canary scan, and cleanup are committed in
+[private-upstream-drill.md](private-upstream-drill.md). A future run must add
+dated provider/client evidence here without committing credentials or raw
+private artifacts.

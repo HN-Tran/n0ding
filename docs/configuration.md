@@ -7,7 +7,9 @@ Environment variables are expanded inside string values.
 [`config/n0ding.example.toml`](../config/n0ding.example.toml) is a commented
 local starting point. The container uses
 [`config/n0ding.toml`](../config/n0ding.toml), where Compose supplies
-`N0DING_PUBLIC_URL`.
+`N0DING_PUBLIC_URL`. The manual private-upstream drill uses
+[`config/n0ding.private-drill.toml`](../config/n0ding.private-drill.toml);
+it contains environment placeholders but intentionally no credential field.
 
 ## Complete MVP example
 
@@ -130,6 +132,8 @@ is fixed at `/v2/`.
 Cookie, OTP, proxy, and arbitrary custom-header authentication are unsupported.
 Client `Authorization` forwarding is the only fixture-tested private npm input;
 OCI fixture coverage currently uses Bearer tokens. Basic-auth and real private
-upstreams remain unverified.
+upstreams remain unverified. Follow the
+[disposable private-upstream drill](private-upstream-drill.md) rather than
+putting credentials into an upstream URL.
 See the [threat model](threat-model.md) and
 [private roadmap](release-checklist.md).
