@@ -1,6 +1,6 @@
 .PHONY: build test check run docker-test docker-check docker-shell
 
-GO_IMAGE ?= golang:1.24
+GO_IMAGE ?= golang:1.25
 DOCKER_GO = docker run --rm \
 	--volume "$(CURDIR):/src" \
 	--workdir /src \

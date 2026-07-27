@@ -3,11 +3,11 @@
 Status: operator checklist for private alpha use. This is not production
 readiness, a public launch gate, or permission to tag or publish an artifact.
 
-Use this checklist only for a disposable self-hosted npm + OCI cache on a
-trusted private network. PyPI is not implemented, private publishing is not
-implemented, there is no n0ding client authentication or RBAC, and retention
-does not enforce a strict byte quota. The seven-day soak and real private
-provider drills remain open.
+Use this checklist only for a disposable self-hosted npm, OCI, and PyPI cache
+on a trusted private network. Private publishing is not implemented, there is
+no n0ding client authentication or RBAC, and retention does not enforce a
+strict byte quota. The seven-day soak and real private provider drills remain
+open.
 
 ## Before starting
 
@@ -17,8 +17,8 @@ provider drills remain open.
   multi-writer operation is unsupported.
 - Put `/data` on a dedicated Docker volume, filesystem, or host quota boundary
   with known capacity. Do not share it with unrelated data.
-- Choose `storage.max_age` from usable capacity and worst credible unique npm
-  plus OCI ingress. Do not treat the default `720h` as a capacity plan.
+- Choose `storage.max_age` from usable capacity and worst credible unique npm,
+  OCI, and PyPI ingress. Do not treat the default `720h` as a capacity plan.
 - Keep provider credentials out of committed config, command lines, Git
   history, support logs, and public issues. The real private-upstream drill has
   procedure only; no real provider credential evidence is claimed.
@@ -41,6 +41,9 @@ curl -fsS http://localhost:8080/metrics
 - Verify cache behavior with empty npm client caches and, for OCI, a client or
   daemon that is not already satisfying pulls from its own local cache. See
   [compatibility.md](compatibility.md).
+- For PyPI, verify with an empty pip or uv cache and confirm both the Simple
+  page and distribution file show `X-N0ding-Cache: HIT` on a second run when
+  the file origin is allowlisted.
 - Watch both n0ding's logical complete-object metrics and real filesystem
   usage:
 
@@ -70,7 +73,8 @@ test "$(docker inspect --format '{{.State.Running}}' \
   `/data` backed up separately.
 - Restore into a new empty volume first, then validate `/healthz`,
   `/api/v1/status`, `/metrics`, `npm ci` from a committed lockfile with an
-  empty npm cache, and one OCI digest check.
+  empty npm cache, one PyPI install from an empty pip or uv cache, and one OCI
+  digest check.
 - Keep the untouched source volume until the restored deployment passes. If
   restore validation fails, stop the restored deployment and roll back to the
   original volume or discard the restored cache and repopulate it.
@@ -125,7 +129,7 @@ docker compose down
 
 - Public release, hosted multi-tenant service, production supply-chain security
   claims, or an availability commitment.
-- PyPI caching, package publishing, client auth, users, RBAC, signing, malware
+- Package publishing, client auth, users, RBAC, signing, malware
   scanning, policy enforcement, or general artifact caching.
 - Real private npm/OCI provider claims until the manual drill has been run with
   dated provider/client evidence and clean canary scans.
@@ -133,5 +137,5 @@ docker compose down
   capacity, alerts, and explicit risk acceptance.
 - Cross-version cache-format guarantees, shared writable cache directories,
   distributed locking, or multiple n0ding writers.
-- Closing `v0.1-private` while the seven-day soak, PyPI implementation, TLS
-  client matrix, and real-provider credential gates remain open.
+- Closing `v0.1-private` while the seven-day soak, TLS client matrix, and
+  real-provider credential gates remain open.

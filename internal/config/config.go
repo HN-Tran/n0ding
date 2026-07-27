@@ -53,6 +53,7 @@ type Repository struct {
 	Upstream             string
 	TTL                  time.Duration
 	ForwardAuthorization bool
+	AllowedFileOrigins   []string
 }
 
 func Load(path string) (Config, error) {
@@ -177,6 +178,8 @@ func Parse(reader io.Reader) (Config, error) {
 				if err != nil {
 					return Config{}, fmt.Errorf("line %d: invalid boolean: %w", lineNumber, err)
 				}
+			case "allowed_file_origins":
+				current.AllowedFileOrigins = splitCSV(value)
 			default:
 				return Config{}, fmt.Errorf("line %d: unknown repository key %q", lineNumber, key)
 			}
@@ -228,11 +231,14 @@ func (c Config) Validate() error {
 			return fmt.Errorf("duplicate repository name %q", repo.Name)
 		}
 		names[repo.Name] = struct{}{}
-		if repo.Type != "npm" && repo.Type != "oci" {
+		if repo.Type != "npm" && repo.Type != "oci" && repo.Type != "pypi" {
 			return fmt.Errorf("repository %q: unsupported type %q", repo.Name, repo.Type)
 		}
 		if repo.Type == "oci" && repo.Path != "/v2/" {
 			return fmt.Errorf("repository %q: OCI path must be /v2/", repo.Name)
+		}
+		if repo.Type == "pypi" && !strings.HasSuffix(repo.Path, "/simple/") {
+			return fmt.Errorf("repository %q: PyPI path must end with /simple/", repo.Name)
 		}
 		if !strings.HasPrefix(repo.Path, "/") || !strings.HasSuffix(repo.Path, "/") {
 			return fmt.Errorf("repository %q: path must start and end with /", repo.Name)
@@ -251,8 +257,32 @@ func (c Config) Validate() error {
 		if repo.TTL <= 0 {
 			return fmt.Errorf("repository %q: ttl must be positive", repo.Name)
 		}
+		for _, origin := range repo.AllowedFileOrigins {
+			parsed, parseErr := url.Parse(origin)
+			if parseErr != nil || parsed.Scheme == "" || parsed.Host == "" {
+				return fmt.Errorf("repository %q: allowed_file_origins must contain absolute HTTP(S) origins", repo.Name)
+			}
+			if parsed.Scheme != "http" && parsed.Scheme != "https" {
+				return fmt.Errorf("repository %q: allowed_file_origins must use http or https", repo.Name)
+			}
+			if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+				(parsed.Path != "" && parsed.Path != "/") {
+				return fmt.Errorf("repository %q: allowed_file_origins must not contain path, userinfo, query, or fragment", repo.Name)
+			}
+		}
 	}
 	return nil
+}
+
+func splitCSV(value string) []string {
+	var items []string
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
 }
 
 func parseValue(raw string) (string, error) {

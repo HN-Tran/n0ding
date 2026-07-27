@@ -18,7 +18,8 @@ implicitly supported.
 | OCI | Podman | image pull | Unknown | `podman version` was unavailable on the Windows test host |
 | OCI | Docker/Podman | private registry pull | Not verified | Auth/security follow-up |
 | OCI | Docker/Podman | image push | Not implemented | Explicit non-goal for this spike |
-| PyPI | pip/uv | package install | Not implemented | Planned only after the private [PyPI design gate](pypi-design.md) |
+| PyPI | in-process fixtures | Simple HTML/JSON rewrite and file cache | Added 2026-07-27 | Unit coverage rewrites both representations, preserves Simple attributes, allowlists file origins, verifies SHA-256 before cache commit, and keeps authenticated requests uncached |
+| PyPI | pip/uv | package install | Not verified | Real-client evidence remains pending after the initial adapter |
 
 Automated tests also exercise the same HTTP behavior against an in-process
 upstream. The real-client check used Node.js 24.18.0 LTS with npm 11.16.0 and

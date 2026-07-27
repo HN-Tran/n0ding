@@ -25,7 +25,8 @@ It is still not a production supply-chain security platform.
 - [x] OCI SHA-256 verification before cache commit.
 - [x] Persistent local filesystem cache with atomic writes.
 - [x] Startup stale-temp cleanup, age-based GC, and same-key coalescing.
-- [x] One binary, one config, no database, no third-party Go dependencies.
+- [x] One binary, one config, no database. PyPI adds the narrowly scoped
+  `golang.org/x/net/html` dependency for HTML rewriting.
 
 Evidence remains in [compatibility.md](compatibility.md) and
 [spike-scorecard.md](spike-scorecard.md).
@@ -129,7 +130,8 @@ explicit unsupported-use warnings.
 
 Passing that checklist does not close the full `v0.1-private` trust gate. It
 does not prove real private-provider credentials, trusted TLS client matrices,
-PyPI support, strict byte-quota behavior, or the uninterrupted seven-day soak.
+real pip/uv compatibility, strict byte-quota behavior, or the uninterrupted
+seven-day soak.
 
 ## 4. Real-client and TLS compatibility
 
@@ -145,14 +147,15 @@ PyPI support, strict byte-quota behavior, or the uninterrupted seven-day soak.
 
 - [x] Record the protocol, URL-rewrite, integrity, auth, and dependency
   decisions in [pypi-design.md](pypi-design.md).
-- [ ] Resolve every blocking design decision in that document.
-- [ ] Add a PyPI adapter without weakening the shared HTTP/cache policy.
-- [ ] Support both required Simple API representation paths selected by the
+- [x] Resolve every blocking design decision in that document.
+- [x] Add a PyPI adapter without weakening the shared HTTP/cache policy.
+- [x] Support both required Simple API representation paths selected by the
   design.
-- [ ] Verify distribution hashes before cache commit where the index supplies
+- [x] Verify distribution hashes before cache commit where the index supplies
   them.
 - [ ] Test normalized names, trailing-slash redirects, wheels, source
-  distributions, yanked files, `Requires-Python`, and metadata sidecars.
+  distributions, yanked files, `Requires-Python`, and metadata sidecars with
+  real pip/uv clients.
 - [ ] Run two clean-client installs with pip and uv, including restart and
   offline-client-cache isolation.
 - [ ] Test a private PyPI-compatible upstream only after the private-auth model

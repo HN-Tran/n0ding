@@ -1,7 +1,7 @@
 # n0ding
 
-> n0ding is a small, self-hosted, read-only pull-through cache for npm and OCI
-> artifacts, built for homelabs and small technical teams.
+> n0ding is a small, self-hosted, read-only pull-through cache for npm, OCI,
+> and PyPI artifacts, built for homelabs and small technical teams.
 
 > [!WARNING]
 > **v0.1 is a private hardening phase, not a public release.** It is intended
@@ -12,14 +12,14 @@
 ## What n0ding is
 
 - One Go binary with one TOML configuration file.
-- A persistent local filesystem cache for npm metadata/tarballs and OCI
-  manifests, indexes, configs, and blobs.
-- Compatible with standard npm and Docker/OCI pull clients; no client plugin is
-  required.
+- A persistent local filesystem cache for npm metadata/tarballs, OCI manifests,
+  indexes, configs, blobs, and PyPI Simple API pages/distribution files.
+- Compatible with standard npm, Docker/OCI, pip, and uv pull/install clients;
+  no client plugin is required.
 - Config-first, Docker Compose-friendly, observable through health, JSON status,
   and Prometheus-compatible metrics endpoints.
-- Deliberately narrow today: read-only npm and OCI are the implemented protocol
-  scope. PyPI is planned only after its design and private-auth gates close.
+- Deliberately narrow today: read-only package loading is the implemented
+  protocol scope.
 
 ## What n0ding is not
 
@@ -29,8 +29,7 @@
 - Not an authentication, user-management, RBAC, scanning, signing, or policy
   system.
 - Not a replacement for a production-grade artifact manager.
-- Not yet a supported PyPI cache, and not a Maven, NuGet, Helm, or general
-  artifact cache.
+- Not a Maven, NuGet, Helm, or general artifact cache.
 
 ## Quickstart with Docker Compose
 
@@ -128,6 +127,22 @@ deployments, use a trusted TLS reverse proxy instead of an insecure-registry
 exception. Detailed Caddy, nginx, and private-CA guidance is in
 [docs/operations.md](docs/operations.md).
 
+## PyPI / pip and uv client setup
+
+Point pip or uv at the Simple API endpoint:
+
+```sh
+python -m pip install --index-url http://localhost:8080/pypi/simple/ requests
+uv pip install --index-url http://localhost:8080/pypi/simple/ requests
+```
+
+The adapter rewrites Simple API HTML and JSON distribution links through
+`/pypi/files/` only when the file origin is explicitly allowed by config.
+Public PyPI needs `https://files.pythonhosted.org` in
+`allowed_file_origins`, which is included in the example Compose config. When
+a Simple API link includes a SHA-256 fragment, n0ding verifies it before
+committing the distribution file to cache.
+
 ## Configuration
 
 The container uses [`config/n0ding.toml`](config/n0ding.toml). A commented,
@@ -153,6 +168,7 @@ credentials into a committed config.
 | `GET /api/v1/status` | Version and repository/cache counters |
 | `GET /api/v1/repositories/npm/setup` | npm setup snippet |
 | `GET /api/v1/repositories/oci/setup` | Docker pull snippet |
+| `GET /api/v1/repositories/pypi/setup` | pip and uv setup snippet |
 | `GET /metrics` | Prometheus-compatible counters |
 
 ## Known limitations
@@ -163,7 +179,8 @@ credentials into a committed config.
   existing upstream credential handling is present.
 - Real private-upstream workflows and credential revocation are not yet
   validated.
-- PyPI is a design gate, not an implemented adapter.
+- PyPI support is read-only and caches only allowed file origins; publishing is
+  not implemented.
 - Podman has not yet been tested.
 - Range requests are proxied, but partial responses are not cached.
 - Retention is based on maximum object age, not LRU or a strict byte quota;
@@ -178,7 +195,8 @@ disk-full failure mode and operator guardrails.
 
 ## Development
 
-n0ding uses the Go standard library only.
+n0ding uses the Go standard library plus `golang.org/x/net/html` for PyPI
+Simple API HTML rewriting.
 
 ```sh
 go test ./...
@@ -195,14 +213,14 @@ make docker-check
 make docker-shell
 ```
 
-These targets use `golang:1.24`, mount the checkout at `/src`, and keep Go
+These targets use `golang:1.25`, mount the checkout at `/src`, and keep Go
 build/module/temp caches under `.tmp/`, which is ignored by Git.
 
 The [architecture](docs/architecture.md), [baseline
 scorecard](docs/spike-scorecard.md), [threat model](docs/threat-model.md), and
 [v0.1-private roadmap](docs/release-checklist.md) describe the current
-boundaries and evidence. The [PyPI design gate](docs/pypi-design.md) records
-decisions that must be made before implementation.
+boundaries and evidence. The [PyPI design](docs/pypi-design.md) records the
+adapter decisions and remaining real-client evidence.
 
 ## Security and license
 

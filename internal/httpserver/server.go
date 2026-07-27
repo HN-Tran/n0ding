@@ -15,6 +15,7 @@ import (
 	"github.com/HN-Tran/n0ding/internal/config"
 	"github.com/HN-Tran/n0ding/internal/npmproxy"
 	"github.com/HN-Tran/n0ding/internal/ociproxy"
+	"github.com/HN-Tran/n0ding/internal/pypiproxy"
 	"github.com/HN-Tran/n0ding/internal/repository"
 )
 
@@ -106,6 +107,18 @@ func New(cfg config.Config, version string, logger *slog.Logger) (*Server, error
 				Store:         store,
 				Logger:        logger,
 			})
+		case "pypi":
+			proxy, err = pypiproxy.New(pypiproxy.Options{
+				Name:                 configuredRepository.Name,
+				Path:                 configuredRepository.Path,
+				Upstream:             configuredRepository.Upstream,
+				PublicBaseURL:        cfg.Server.PublicBaseURL,
+				TTL:                  configuredRepository.TTL,
+				ForwardAuthorization: configuredRepository.ForwardAuthorization,
+				AllowedFileOrigins:   configuredRepository.AllowedFileOrigins,
+				Store:                store,
+				Logger:               logger,
+			})
 		default:
 			err = fmt.Errorf("unsupported repository type %q", configuredRepository.Type)
 		}
@@ -115,6 +128,9 @@ func New(cfg config.Config, version string, logger *slog.Logger) (*Server, error
 		server.repositories = append(server.repositories, proxy)
 		server.byName[configuredRepository.Name] = proxy
 		server.mux.Handle(configuredRepository.Path, proxy)
+		if pypi, ok := proxy.(*pypiproxy.Proxy); ok {
+			server.mux.Handle(pypi.FilePath(), proxy)
+		}
 	}
 
 	server.mux.HandleFunc("/healthz", server.health)

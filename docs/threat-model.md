@@ -2,8 +2,8 @@
 
 Status: initial `v0.1-private` threat model, 2026-07-26.
 
-This model covers the current read-only npm + OCI service and the planned
-private-use hardening work. It is not a security certification.
+This model covers the current read-only npm, OCI, and PyPI service and the
+planned private-use hardening work. It is not a security certification.
 
 ## Assets
 
@@ -40,18 +40,18 @@ users who can modify it are outside the current integrity boundary.
 
 | ID | Threat | Current control | Remaining proof or gap |
 |---|---|---|---|
-| T1 | Client credential forwarded to the wrong upstream | Shared header policy strips unsupported identity headers; `Authorization` needs adapter opt-in and survives only exact-origin redirects; full-server npm/OCI fixtures prove cross-origin and failing redirects are credential-free | Real registry/CDN redirect behavior and supported private-auth schemes remain unverified |
+| T1 | Client credential forwarded to the wrong upstream | Shared header policy strips unsupported identity headers; `Authorization` needs adapter opt-in and survives only exact-origin redirects; full-server npm/OCI fixtures prove cross-origin and failing redirects are credential-free; PyPI unit coverage exercises failure redaction | Real registry/CDN redirect behavior and supported private-auth schemes remain unverified |
 | T2 | Credential persisted in cache metadata | Authentication metadata is rejected; cookie-bearing responses require explicit `public`; the storage layer scrubs known sensitive fields again; raw fixtures, stopped backup/restore evidence, and the retention-smoke cache/archive/operator outputs pass token/query/response canary scans | Repeat the raw scan against real private upstream output |
 | T3 | Credential exposed through status, errors, or logs | Status and explicit upstream/error URL fields omit userinfo, query, and fragment; full-server and retention-smoke evidence scans status, metrics, structured logs, expected cancel errors, client results, and progress/result artifacts | Arbitrary paths and nested non-URL error strings are not a secret store; real-upstream scan remains pending |
-| T4 | User-specific body reused for another client | npm authenticated requests bypass shared caching; two-identity fixtures create zero npm objects; OCI serves shared bytes only after exact current-identity digest confirmation, differing/missing digests force a fresh `GET`; restore and concurrent retention-smoke cycles repeat A/B/denied checks | Test two real identities and provider revocation; OCI authenticated content sharing remains a deliberate sensitive boundary |
+| T4 | User-specific body reused for another client | npm and PyPI authenticated requests bypass shared caching; two-identity fixtures create zero npm/PyPI objects; OCI serves shared bytes only after exact current-identity digest confirmation, differing/missing digests force a fresh `GET`; restore and concurrent retention-smoke cycles repeat A/B/denied checks for npm/OCI | Test two real identities and provider revocation; OCI authenticated content sharing remains a deliberate sensitive boundary |
 | T5 | Wrong representation reused because cache key is incomplete | Cache keys include target and `Accept`; responses varying on any other client-controlled dimension are not stored, except fixed upstream `Accept-Encoding: identity` | Extend the key only with evidence from a protocol adapter |
-| T6 | Partial or corrupt object committed or restored | Atomic commit, size check, OCI SHA-256 verification, temp cleanup; missing/malformed/size-mismatched restored pairs are not counted or served; restore and retention smoke prove truncated-body refetch, canceled-stream cleanup, SIGKILL temp cleanup, and final body/metadata integrity | npm body integrity is ultimately enforced by npm/lockfile SRI; an unavailable upstream prevents repair; seven-day evidence remains pending |
+| T6 | Partial or corrupt object committed or restored | Atomic commit, size check, OCI SHA-256 verification, PyPI SHA-256 verification when supplied by the Simple link, temp cleanup; missing/malformed/size-mismatched restored pairs are not counted or served; restore and retention smoke prove truncated-body refetch, canceled-stream cleanup, SIGKILL temp cleanup, and final body/metadata integrity | npm body integrity is ultimately enforced by npm/lockfile SRI; unhashed PyPI files use TTL freshness rather than immutability; an unavailable upstream prevents repair; seven-day evidence remains pending |
 | T7 | Malicious upstream poisons clients | Configured HTTPS upstream, OCI digest checks, npm client integrity where present | No signature, provenance, malware, or policy verification |
 | T8 | Unauthorized client reads private cache | No n0ding client authentication exists | Bind privately and enforce TLS/auth at a reverse proxy; private-use auth topology needs a drill |
 | T9 | Disk exhaustion or deletion races | Age-based GC deletes only complete objects and ignores active temps; store locking protects local commits; the short soak proves forced expiry to zero complete objects, disk reduction, refetch, concurrent writers, and status/metrics consistency; the private-alpha decision requires dedicated capacity plus host free-space alerts | Age alone does not bound burst ingress, in-flight temps, malformed/orphaned bytes, or total filesystem use; no strict byte quota exists; the real seven-day run and per-deployment capacity/risk-acceptance drill remain pending |
 | T10 | Backup captures inconsistent state or secrets | Stopped Compose backup includes cache and config; restore targets a fresh empty volume; archive members, cache/status/metrics/log/error outputs, restored identity behavior, rollback, timings, and canaries are checked deterministically in CI | Cross-version format compatibility and backup of real private-upstream output remain unverified |
 | T11 | Multiple writers corrupt storage | Documented one-process/one-writable-cache rule | No distributed lock; deployment must enforce the rule |
-| T12 | SSRF through client-controlled target | Adapter constructs initial targets under one configured upstream; redirect credentials are exact-origin only; deterministic cross-origin success and failure redirects strip credentials | Redirect destinations remain upstream-controlled and are not allowlisted; real provider chains remain pending |
+| T12 | SSRF through client-controlled target | Adapters construct initial targets under one configured upstream; PyPI file targets are restricted to the configured upstream origin plus explicit `allowed_file_origins`; redirect credentials are exact-origin only; deterministic cross-origin success and failure redirects strip credentials | Redirect destinations remain upstream-controlled and are not allowlisted; real provider chains remain pending |
 
 ## Cache-admission policy
 
@@ -77,10 +77,10 @@ minimum safety rule, not a complete implementation of
 
 Until Section 2 of the [private roadmap](release-checklist.md) is complete:
 
-- npm `forward_authorization = false` remains the safe default;
+- npm and PyPI `forward_authorization = false` remain the safe default;
 - enabling it forwards only the `Authorization` header and makes that request
-  bypass the shared npm cache; fixture identities A and B cannot populate or
-  consume a persistent private npm entry;
+  bypass the shared npm/PyPI cache; fixture identities A and B cannot populate
+  or consume a persistent private npm/PyPI entry;
 - OCI forwards `Authorization` because the Registry V2 pull flow requires it,
   never writes that header to cache metadata, and validates every hit upstream
   against the exact cached digest for the current identity;
@@ -105,7 +105,7 @@ Review this model before:
 - implementing the aggregate byte-limit design in
   [retention-policy.md](retention-policy.md);
 - implementing private-upstream credential configuration;
-- adding PyPI;
+- changing PyPI file-origin admission or hash verification;
 - changing the cache key or response-header policy;
 - adding client authentication, publishing, shared storage, or a database;
 - claiming availability or supply-chain security properties.
