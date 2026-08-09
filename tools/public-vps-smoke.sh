@@ -61,11 +61,11 @@ cafile=$work/server-ca.crt
 //n0ding.test/npm/:keyfile=$work/client.key
 EOF
 npm view is-number version --userconfig "$work/npmrc" --cache "$work/npm-cache" --prefer-online >/dev/null
-sudo mkdir -p /etc/docker/certs.d/n0ding.test
-sudo cp "$work/server-ca.crt" /etc/docker/certs.d/n0ding.test/ca.crt
-sudo cp "$work/client.crt" /etc/docker/certs.d/n0ding.test/client.cert
-sudo cp "$work/client.key" /etc/docker/certs.d/n0ding.test/client.key
-docker pull n0ding.test/library/alpine:3.20 >/dev/null
+sudo mkdir -p '/etc/docker/certs.d/n0ding.test:443'
+sudo cp "$work/server-ca.crt" '/etc/docker/certs.d/n0ding.test:443/ca.crt'
+sudo cp "$work/client.crt" '/etc/docker/certs.d/n0ding.test:443/client.cert'
+sudo cp "$work/client.key" '/etc/docker/certs.d/n0ding.test:443/client.key'
+docker pull n0ding.test:443/library/alpine:3.20 >/dev/null
 curl -fsS "${mtls[@]}" https://n0ding.test/api/v1/status >"$work/status.json"
 python - "$work/status.json" <<'PY'
 import json, sys
