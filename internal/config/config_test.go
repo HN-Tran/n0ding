@@ -102,6 +102,23 @@ func TestParseRejectsUnsafeRepositoryNames(t *testing.T) {
 	}
 }
 
+func TestParseRejectsGeneratedPyPIRouteCollision(t *testing.T) {
+	_, err := Parse(strings.NewReader(`
+[repository.files]
+type = "npm"
+path = "/pypi/files/"
+upstream = "https://registry.npmjs.org"
+
+[repository.pypi]
+type = "pypi"
+path = "/pypi/simple/"
+upstream = "https://pypi.org/simple"
+`))
+	if err == nil || !strings.Contains(err.Error(), "same route") {
+		t.Fatalf("expected generated route collision, got %v", err)
+	}
+}
+
 func TestParseStorageDefaults(t *testing.T) {
 	cfg, err := Parse(strings.NewReader(`
 [repository.npm]

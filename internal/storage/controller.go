@@ -58,7 +58,7 @@ func (c *Controller) Reserve(bytes, filesystemFreeBytes int64) *Reservation {
 	availableFilesystem := filesystemFreeBytes - min(c.reservedBytes, filesystemFreeBytes)
 	if bytes <= 0 || (c.maxBytes > 0 && exceedsAvailable(c.maxBytes, budgetUsed, bytes)) ||
 		(c.minFreeBytes > 0 && exceedsAvailable(availableFilesystem, c.minFreeBytes, bytes)) {
-		c.bypassObjects++
+		c.bypassObjects = saturatingAdd(c.bypassObjects, 1)
 		if bytes > 0 {
 			c.bypassBytes = saturatingAdd(c.bypassBytes, bytes)
 		}

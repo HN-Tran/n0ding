@@ -289,9 +289,16 @@ func (c Config) Validate() error {
 			return fmt.Errorf("repository %q: path must start and end with /", repo.Name)
 		}
 		if previous, exists := paths[repo.Path]; exists {
-			return fmt.Errorf("repositories %q and %q use the same path", previous, repo.Name)
+			return fmt.Errorf("repositories %q and %q register the same route %q", previous, repo.Name, repo.Path)
 		}
 		paths[repo.Path] = repo.Name
+		if repo.Type == "pypi" {
+			filePath := strings.TrimSuffix(repo.Path, "simple/") + "files/"
+			if previous, exists := paths[filePath]; exists {
+				return fmt.Errorf("repositories %q and %q register the same route %q", previous, repo.Name, filePath)
+			}
+			paths[filePath] = repo.Name
+		}
 		upstream, err := url.Parse(repo.Upstream)
 		if err != nil || upstream.Scheme == "" || upstream.Host == "" {
 			return fmt.Errorf("repository %q: upstream must be an absolute URL", repo.Name)
