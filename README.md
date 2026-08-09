@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/HN-Tran/n0ding/actions/workflows/ci.yml/badge.svg)](https://github.com/HN-Tran/n0ding/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-![Status](https://img.shields.io/badge/status-private%20alpha-orange)
+![Status](https://img.shields.io/badge/status-public%20preview-orange)
 
 **n0ding is an open-source, self-hosted pull-through cache that speeds up and
 centralizes npm, pip/uv, and Docker/OCI downloads behind one small service.**
@@ -134,7 +134,7 @@ docker compose up --build -d
 ```
 
 See the [operations guide](docs/operations.md) before exposing n0ding outside
-the local machine. For repeated private-alpha self-use, work through the
+the local machine. For repeated preview use, work through the
 [private self-use checklist](docs/private-self-use.md).
 
 After startup, point one or more standard clients at n0ding:
@@ -271,7 +271,7 @@ credentials into a committed config.
 - Podman has not yet been tested.
 - Range requests are proxied, but partial responses are not cached.
 - Retention is based on maximum object age, not LRU or a strict byte quota;
-  private-alpha use requires filesystem capacity monitoring.
+  preview use requires filesystem capacity monitoring.
 - Only one n0ding process may write to a cache directory.
 - Only local filesystem storage is supported.
 
@@ -305,9 +305,11 @@ build/module/temp caches under `.tmp/`, which is ignored by Git.
 
 The [architecture](docs/architecture.md), [baseline
 scorecard](docs/spike-scorecard.md), [threat model](docs/threat-model.md), and
-[v0.1-private roadmap](docs/release-checklist.md) describe the current
+[v0.1.0 release gate](docs/v0.1-release-gate.md) and the stricter
+[long-term hardening roadmap](docs/release-checklist.md) describe the current
 boundaries and evidence. The [PyPI design](docs/pypi-design.md) records the
-adapter decisions and remaining real-client evidence.
+adapter decisions; current pip and uv evidence is in the
+[compatibility record](docs/compatibility.md).
 
 ## Security and license
 

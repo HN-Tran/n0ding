@@ -2,7 +2,8 @@
 
 n0ding ships as a multi-architecture Linux container for AMD64 and ARM64. The
 same image runs through Docker Desktop on Windows and macOS. The default
-deployment binds only to loopback and is intended for private-alpha use.
+deployment binds only to loopback and is intended for public-preview use on
+localhost or a trusted private network.
 
 ## Install a specific version
 

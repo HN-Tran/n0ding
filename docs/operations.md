@@ -1,6 +1,6 @@
 # Operations guide
 
-The `v0.1-private` read-only hardening baseline is one process, one
+The `v0.1.0` public-preview baseline is one process, one
 configuration file, and one local filesystem cache for npm, OCI, and PyPI
 package loading. Run exactly one n0ding process against a cache directory;
 shared-volume multi-writer operation is unsupported.
@@ -106,8 +106,8 @@ The repository includes a deterministic, same-version recovery drill:
 It stops n0ding, archives cache plus config, restores into a new empty volume,
 revalidates npm lockfile integrity and OCI digests, exercises rollback and a
 corrupt-object refetch, and scans the archive and restored evidence for fake
-credential canaries. PyPI restore validation should be added to the private
-operator evidence once pip/uv real-client evidence is available. See the
+credential canaries. pip and uv compatibility are exercised separately by the
+release-candidate smoke across a persistent restart. See the
 [stopped Compose backup/restore drill](backup-restore-drill.md) for its exact
 scope and measured result.
 
@@ -209,8 +209,8 @@ pass/fail criteria, artifacts, and cleanup behavior are in the
 
 ## Disk capacity and age-only retention
 
-`v0.1-private` deliberately keeps age-only retention. It has no strict byte
-quota. This is acceptable only for a disposable private-alpha cache on a
+`v0.1.0` deliberately keeps age-only retention. It has no strict byte
+quota. This is acceptable only for a disposable preview cache on a
 capacity-monitored, preferably dedicated volume.
 
 Monitor both n0ding's valid complete-object total and the real filesystem:
