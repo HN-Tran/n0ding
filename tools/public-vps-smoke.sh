@@ -51,8 +51,14 @@ test -n "$caddy_ip"
 echo "$caddy_ip n0ding.test" | sudo tee -a /etc/hosts >/dev/null
 for _ in $(seq 1 30); do docker exec "$caddy" test -f /data/caddy/pki/authorities/local/root.crt && break; sleep 1; done
 docker cp "$caddy:/data/caddy/pki/authorities/local/root.crt" "$work/server-ca.crt"
-if curl -fsS --cacert "$work/server-ca.crt" https://n0ding.test/healthz >/dev/null 2>&1; then echo 'unauthenticated request succeeded' >&2; exit 1; fi
 mtls=(--cacert "$work/server-ca.crt" --cert "$work/client.crt" --key "$work/client.key")
+ready=false
+for _ in $(seq 1 30); do
+  if curl -fsS "${mtls[@]}" https://n0ding.test/healthz >/dev/null 2>&1; then ready=true; break; fi
+  sleep 1
+done
+if [ "$ready" != true ]; then echo 'authenticated HTTPS endpoint did not become ready' >&2; exit 1; fi
+if curl -fsS --cacert "$work/server-ca.crt" https://n0ding.test/healthz >/dev/null 2>&1; then echo 'unauthenticated request succeeded' >&2; exit 1; fi
 curl -fsS "${mtls[@]}" https://n0ding.test/healthz >/dev/null
 python -m pip install --no-deps --target "$work/pip" --no-cache-dir --cert "$work/server-ca.crt" --client-cert "$work/client.pem" --index-url https://n0ding.test/pypi/simple/ idna==3.10
 SSL_CLIENT_CERT="$work/client.pem" uv pip install --system --no-cache --cert "$work/server-ca.crt" --index-url https://n0ding.test/pypi/simple/ idna==3.10
