@@ -75,6 +75,42 @@ func TestLookupRejectsOversizedMetadata(t *testing.T) {
 	}
 }
 
+func TestReplacementPublishesNewGenerationAtomically(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutBytes("same-key", Metadata{Status: http.StatusOK}, []byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	oldEntry, found, err := store.Lookup("same-key", time.Hour)
+	if err != nil || !found {
+		t.Fatalf("old lookup found=%v err=%v", found, err)
+	}
+	defer oldEntry.Close()
+	oldPath := oldEntry.BodyPath
+
+	if err := store.PutBytes("same-key", Metadata{Status: http.StatusOK}, []byte("other")); err != nil {
+		t.Fatal(err)
+	}
+	newEntry, found, err := store.Lookup("same-key", time.Hour)
+	if err != nil || !found {
+		t.Fatalf("new lookup found=%v err=%v", found, err)
+	}
+	defer newEntry.Close()
+	if newEntry.BodyPath == oldPath {
+		t.Fatal("replacement reused mutable body path")
+	}
+	newBody, err := io.ReadAll(newEntry.Body)
+	if err != nil || string(newBody) != "other" {
+		t.Fatalf("new body = %q, err=%v", newBody, err)
+	}
+	oldBody, err := io.ReadAll(oldEntry.Body)
+	if err != nil || string(oldBody) != "first" {
+		t.Fatalf("open old reader changed: body=%q err=%v", oldBody, err)
+	}
+}
+
 func TestPutStripsSensitiveMetadataHeaders(t *testing.T) {
 	store, err := New(t.TempDir())
 	if err != nil {
@@ -184,7 +220,7 @@ func TestGCDeletesOnlyOldCompleteObjectsAndIgnoresTemps(t *testing.T) {
 	}
 
 	now = now.Add(2 * time.Hour)
-	orphanMetadataBody, orphanMetadataPath := store.paths("orphan-metadata")
+	orphanMetadataBody, orphanMetadataPath := currentBodyPath(t, store, "orphan-metadata")
 	if err := os.Remove(orphanMetadataBody); err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +428,7 @@ func TestRestoredIncompleteOrCorruptObjectsAreNeverCountedAsComplete(t *testing.
 			); err != nil {
 				t.Fatal(err)
 			}
-			bodyPath, metadataPath := store.paths("restored-object")
+			bodyPath, metadataPath := currentBodyPath(t, store, "restored-object")
 			test.mutate(t, bodyPath, metadataPath)
 
 			bytes, objects, err := store.Size()
@@ -419,6 +455,20 @@ func TestRestoredIncompleteOrCorruptObjectsAreNeverCountedAsComplete(t *testing.
 			}
 		})
 	}
+}
+
+func currentBodyPath(t *testing.T, store *Store, key string) (string, string) {
+	t.Helper()
+	legacyBodyPath, metadataPath := store.paths(key)
+	metadata, err := readMetadata(metadataPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyPath, err := bodyPathForEntry(metadataPath, legacyBodyPath, metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bodyPath, metadataPath
 }
 
 type failAfterWriter struct {

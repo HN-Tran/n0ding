@@ -31,6 +31,7 @@ type Metadata struct {
 	StoredAt      time.Time   `json:"stored_at"`
 	ContentBytes  int64       `json:"content_bytes"`
 	ContentDigest string      `json:"content_digest,omitempty"`
+	BodyFile      string      `json:"body_file,omitempty"`
 }
 
 type Entry struct {
@@ -68,7 +69,7 @@ func (s *Store) Lookup(key string, ttl time.Duration) (Entry, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	bodyPath, metadataPath := s.paths(key)
+	legacyBodyPath, metadataPath := s.paths(key)
 	metadata, err := readMetadata(metadataPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return Entry{}, false, nil
@@ -79,6 +80,10 @@ func (s *Store) Lookup(key string, ttl time.Duration) (Entry, bool, error) {
 
 	if s.now().Sub(metadata.StoredAt) >= ttl {
 		return Entry{}, false, nil
+	}
+	bodyPath, err := bodyPathForEntry(metadataPath, legacyBodyPath, metadata)
+	if err != nil {
+		return Entry{}, false, fmt.Errorf("resolve cache body: %w", err)
 	}
 	info, err := os.Stat(bodyPath)
 	if errors.Is(err, os.ErrNotExist) {
@@ -126,6 +131,7 @@ func (s *Store) PutStreamVerified(
 		return fmt.Errorf("create cache body: %w", err)
 	}
 	bodyTempPath := bodyTemp.Name()
+	generationPath := bodyPath + "." + strings.TrimPrefix(filepath.Base(bodyTempPath), ".body-")
 	keepBody := false
 	defer func() {
 		_ = bodyTemp.Close()
@@ -152,6 +158,7 @@ func (s *Store) PutStreamVerified(
 
 	metadata.StoredAt = s.now().UTC()
 	metadata.ContentBytes = written
+	metadata.BodyFile = filepath.Base(generationPath)
 	metadata.Header = httppolicy.CacheMetadataHeaders(metadata.Header)
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
@@ -181,14 +188,22 @@ func (s *Store) PutStreamVerified(
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := replace(bodyTempPath, bodyPath); err != nil {
+	var previousBodyPath string
+	if previous, previousErr := readMetadata(metadataPath); previousErr == nil {
+		previousBodyPath, _ = bodyPathForEntry(metadataPath, bodyPath, previous)
+	}
+	if err := os.Rename(bodyTempPath, generationPath); err != nil {
 		return fmt.Errorf("commit cache body: %w", err)
 	}
 	keepBody = true
 	if err := replace(metadataTempPath, metadataPath); err != nil {
+		_ = os.Remove(generationPath)
 		return fmt.Errorf("commit cache metadata: %w", err)
 	}
 	keepMetadata = true
+	if previousBodyPath != "" && previousBodyPath != generationPath {
+		_ = os.Remove(previousBodyPath)
+	}
 	return nil
 }
 
@@ -203,12 +218,16 @@ func (s *Store) Size() (bytes int64, objects int64, err error) {
 		if entry.IsDir() || filepath.Ext(path) != ".json" {
 			return nil
 		}
-		bodyPath, valid := bodyPathForMetadata(path)
+		legacyBodyPath, valid := bodyPathForMetadata(path)
 		if !valid {
 			return nil
 		}
 		metadata, metadataErr := readMetadata(path)
 		if metadataErr != nil {
+			return nil
+		}
+		bodyPath, bodyErr := bodyPathForEntry(path, legacyBodyPath, metadata)
+		if bodyErr != nil {
 			return nil
 		}
 		info, infoErr := os.Stat(bodyPath)
@@ -275,7 +294,7 @@ func (s *Store) GC(maxAge time.Duration) (result GCResult, err error) {
 		if entry.IsDir() || filepath.Ext(path) != ".json" {
 			return nil
 		}
-		bodyPath, valid := bodyPathForMetadata(path)
+		legacyBodyPath, valid := bodyPathForMetadata(path)
 		if !valid {
 			return nil
 		}
@@ -285,6 +304,11 @@ func (s *Store) GC(maxAge time.Duration) (result GCResult, err error) {
 			return nil
 		}
 		if metadata.StoredAt.IsZero() || metadata.StoredAt.After(cutoff) {
+			return nil
+		}
+		bodyPath, bodyErr := bodyPathForEntry(path, legacyBodyPath, metadata)
+		if bodyErr != nil {
+			result.Skipped++
 			return nil
 		}
 		info, infoErr := os.Stat(bodyPath)
@@ -352,6 +376,17 @@ func bodyPathForMetadata(metadataPath string) (string, bool) {
 		return "", false
 	}
 	return base + ".body", true
+}
+
+func bodyPathForEntry(metadataPath, legacyBodyPath string, metadata Metadata) (string, error) {
+	if metadata.BodyFile == "" {
+		return legacyBodyPath, nil
+	}
+	if filepath.Base(metadata.BodyFile) != metadata.BodyFile ||
+		!strings.HasPrefix(metadata.BodyFile, strings.TrimSuffix(filepath.Base(metadataPath), ".json")+".body.") {
+		return "", fmt.Errorf("invalid cache body file %q", metadata.BodyFile)
+	}
+	return filepath.Join(filepath.Dir(metadataPath), metadata.BodyFile), nil
 }
 
 func isTempName(name string) bool {
