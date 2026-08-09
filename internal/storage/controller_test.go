@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"math"
 	"sync"
 	"testing"
 )
@@ -48,6 +49,18 @@ func TestControllerEnforcesFilesystemReserveAndTracksBypass(t *testing.T) {
 	}
 }
 
+func TestControllerReservationsShareFilesystemReserve(t *testing.T) {
+	controller := NewController(0, 0.9, 0.75, 50, 0)
+	first := controller.Reserve(60, 150)
+	if first == nil {
+		t.Fatal("first reservation rejected")
+	}
+	if second := controller.Reserve(60, 150); second != nil {
+		t.Fatal("second reservation overcommitted filesystem reserve")
+	}
+	first.Release()
+}
+
 func TestControllerCommitAndPressure(t *testing.T) {
 	controller := NewController(100, 0.9, 0.75, 0, 80)
 	reservation := controller.Reserve(10, 1_000)
@@ -57,10 +70,36 @@ func TestControllerCommitAndPressure(t *testing.T) {
 	if !controller.Snapshot().Pressure {
 		t.Fatal("expected pressure while reservation reaches high watermark")
 	}
-	reservation.Commit(9)
+	if !reservation.Commit(9) {
+		t.Fatal("valid reservation did not commit")
+	}
 	reservation.Commit(9)
 	snapshot := controller.Snapshot()
 	if snapshot.CommittedBytes != 89 || snapshot.ReservedBytes != 0 {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+}
+
+func TestControllerRejectsCommitLargerThanReservation(t *testing.T) {
+	controller := NewController(100, 0.9, 0.75, 0, 0)
+	reservation := controller.Reserve(10, 1_000)
+	if reservation == nil {
+		t.Fatal("reservation rejected")
+	}
+	if reservation.Commit(11) {
+		t.Fatal("oversized commit accepted")
+	}
+	if snapshot := controller.Snapshot(); snapshot.CommittedBytes != 0 || snapshot.ReservedBytes != 0 {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+}
+
+func TestControllerDoesNotOverflowAtIntegerBoundary(t *testing.T) {
+	controller := NewController(math.MaxInt64, 0.9, 0.75, 0, math.MaxInt64-5)
+	if reservation := controller.Reserve(10, math.MaxInt64); reservation != nil {
+		t.Fatal("overflowing reservation accepted")
+	}
+	if snapshot := controller.Snapshot(); snapshot.BypassBytes != 10 {
 		t.Fatalf("snapshot = %#v", snapshot)
 	}
 }
