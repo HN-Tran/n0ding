@@ -218,7 +218,7 @@ func TestNewRunsStartupCacheMaintenance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bytes, objects, err := store.Size()
+	bytes, objects, err := store.Reconcile()
 	if err != nil {
 		t.Fatal(err)
 	}

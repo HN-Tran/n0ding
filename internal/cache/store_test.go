@@ -431,6 +431,9 @@ func TestRestoredIncompleteOrCorruptObjectsAreNeverCountedAsComplete(t *testing.
 			bodyPath, metadataPath := currentBodyPath(t, store, "restored-object")
 			test.mutate(t, bodyPath, metadataPath)
 
+			if _, _, err := store.Reconcile(); err != nil {
+				t.Fatal(err)
+			}
 			bytes, objects, err := store.Size()
 			if err != nil {
 				t.Fatal(err)

@@ -12,15 +12,18 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/HN-Tran/n0ding/internal/httppolicy"
 )
 
 type Store struct {
-	root string
-	now  func() time.Time
-	mu   sync.RWMutex
+	root    string
+	now     func() time.Time
+	mu      sync.RWMutex
+	bytes   atomic.Int64
+	objects atomic.Int64
 }
 
 const maxMetadataBytes = 1 << 20
@@ -62,7 +65,11 @@ func New(root string) (*Store, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("create cache directory: %w", err)
 	}
-	return &Store{root: root, now: time.Now}, nil
+	store := &Store{root: root, now: time.Now}
+	if _, _, err := store.Reconcile(); err != nil {
+		return nil, fmt.Errorf("scan cache directory: %w", err)
+	}
+	return store, nil
 }
 
 func (s *Store) Lookup(key string, ttl time.Duration) (Entry, bool, error) {
@@ -189,8 +196,16 @@ func (s *Store) PutStreamVerified(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var previousBodyPath string
+	var previousBytes int64
+	var previousValid bool
 	if previous, previousErr := readMetadata(metadataPath); previousErr == nil {
 		previousBodyPath, _ = bodyPathForEntry(metadataPath, bodyPath, previous)
+		if previousBodyPath != "" {
+			if info, statErr := os.Stat(previousBodyPath); statErr == nil && info.Mode().IsRegular() && info.Size() == previous.ContentBytes {
+				previousBytes = info.Size()
+				previousValid = true
+			}
+		}
 	}
 	if err := os.Rename(bodyTempPath, generationPath); err != nil {
 		return fmt.Errorf("commit cache body: %w", err)
@@ -201,6 +216,10 @@ func (s *Store) PutStreamVerified(
 		return fmt.Errorf("commit cache metadata: %w", err)
 	}
 	keepMetadata = true
+	s.bytes.Add(written - previousBytes)
+	if !previousValid {
+		s.objects.Add(1)
+	}
 	if previousBodyPath != "" && previousBodyPath != generationPath {
 		_ = os.Remove(previousBodyPath)
 	}
@@ -208,6 +227,12 @@ func (s *Store) PutStreamVerified(
 }
 
 func (s *Store) Size() (bytes int64, objects int64, err error) {
+	return s.bytes.Load(), s.objects.Load(), nil
+}
+
+// Reconcile rebuilds the O(1) usage counters from complete cache entries.
+// It is intended for startup and explicit repair, not request-time status.
+func (s *Store) Reconcile() (bytes int64, objects int64, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -239,7 +264,11 @@ func (s *Store) Size() (bytes int64, objects int64, err error) {
 		return nil
 	})
 	if errors.Is(err, os.ErrNotExist) {
-		return 0, 0, nil
+		err = nil
+	}
+	if err == nil {
+		s.bytes.Store(bytes)
+		s.objects.Store(objects)
 	}
 	return bytes, objects, err
 }
@@ -323,6 +352,8 @@ func (s *Store) GC(maxAge time.Duration) (result GCResult, err error) {
 			result.Skipped++
 			return nil
 		}
+		s.bytes.Add(-info.Size())
+		s.objects.Add(-1)
 		if removeErr := os.Remove(path); removeErr != nil {
 			return removeErr
 		}
