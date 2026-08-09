@@ -39,8 +39,15 @@ openssl req -x509 -new -key client-ca.key -days 3650 \
 openssl genpkey -algorithm ED25519 -out client.key
 openssl req -new -key client.key -subj '/CN=n0ding preview client' \
   -out client.csr
+cat > client.ext <<'EOF'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=clientAuth
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid
+EOF
 openssl x509 -req -in client.csr -CA client-ca.pem -CAkey client-ca.key \
-  -CAcreateserial -days 365 -out client.crt
+  -CAcreateserial -days 365 -extfile client.ext -out client.crt
 
 cat client.crt client.key > client.pem
 ```

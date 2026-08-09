@@ -18,7 +18,14 @@ openssl genpkey -algorithm ED25519 -out "$work/ca.key"
 openssl req -x509 -new -key "$work/ca.key" -days 1 -subj '/CN=n0ding CI CA' -out "$work/ca.pem"
 openssl genpkey -algorithm ED25519 -out "$work/client.key"
 openssl req -new -key "$work/client.key" -subj '/CN=n0ding CI client' -out "$work/client.csr"
-openssl x509 -req -in "$work/client.csr" -CA "$work/ca.pem" -CAkey "$work/ca.key" -CAcreateserial -days 1 -out "$work/client.crt"
+cat >"$work/client.ext" <<'EOF'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=clientAuth
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid
+EOF
+openssl x509 -req -in "$work/client.csr" -CA "$work/ca.pem" -CAkey "$work/ca.key" -CAcreateserial -days 1 -extfile "$work/client.ext" -out "$work/client.crt"
 cat "$work/client.crt" "$work/client.key" > "$work/client.pem"
 cat >"$work/Caddyfile" <<'EOF'
 {
