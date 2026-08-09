@@ -14,6 +14,7 @@ import (
 
 	"github.com/HN-Tran/n0ding/internal/cache"
 	"github.com/HN-Tran/n0ding/internal/config"
+	"github.com/HN-Tran/n0ding/internal/maintenance"
 	"github.com/HN-Tran/n0ding/internal/npmproxy"
 	"github.com/HN-Tran/n0ding/internal/ociproxy"
 	"github.com/HN-Tran/n0ding/internal/pypiproxy"
@@ -34,6 +35,7 @@ type Server struct {
 	gcInterval   time.Duration
 	logger       *slog.Logger
 	storage      *storagecontroller.Controller
+	gc           *maintenance.Coordinator
 }
 
 type managedStore struct {
@@ -78,13 +80,6 @@ func New(cfg config.Config, version string, logger *slog.Logger) (*Server, error
 					"bytes", result.Bytes,
 				)
 			}
-		}
-		if cfg.Storage.MaxAge > 0 {
-			result, gcErr := store.GC(cfg.Storage.MaxAge)
-			if gcErr != nil {
-				return nil, fmt.Errorf("repository %q: startup cache GC: %w", configuredRepository.Name, gcErr)
-			}
-			logGC(logger, configuredRepository.Name, "startup", result)
 		}
 		server.stores = append(server.stores, managedStore{name: configuredRepository.Name, store: store})
 		var proxy repository.Handler
@@ -159,6 +154,12 @@ func New(cfg config.Config, version string, logger *slog.Logger) (*Server, error
 			managed.store.SetController(server.storage)
 		}
 	}
+	server.gc = maintenance.New(server.collect)
+	if server.maxAge > 0 {
+		if run, _ := server.gc.Run(context.Background(), maintenance.TriggerStartup); run.Error != "" {
+			return nil, fmt.Errorf("startup cache GC: %s", run.Error)
+		}
+	}
 
 	server.mux.HandleFunc("/healthz", server.health)
 	server.mux.HandleFunc("/api/v1/status", server.status)
@@ -184,16 +185,32 @@ func (s *Server) RunMaintenance(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for _, managed := range s.stores {
-				result, err := managed.store.GC(s.maxAge)
-				if err != nil {
-					s.logger.Warn("periodic cache GC failed", "repository", managed.name, "error", err)
-					continue
-				}
-				logGC(s.logger, managed.name, "periodic", result)
+			run, accepted := s.gc.Run(ctx, maintenance.TriggerSchedule)
+			if !accepted {
+				s.logger.Debug("scheduled cache GC coalesced", "active_run_id", run.ID, "trigger", run.Trigger)
+			} else if run.Error != "" {
+				s.logger.Warn("scheduled cache GC failed", "run_id", run.ID, "error", run.Error)
 			}
 		}
 	}
+}
+
+func (s *Server) collect(ctx context.Context) (maintenance.Result, error) {
+	var result maintenance.Result
+	for _, managed := range s.stores {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		storeResult, err := managed.store.GC(s.maxAge)
+		if err != nil {
+			return result, fmt.Errorf("repository %q: %w", managed.name, err)
+		}
+		logGC(s.logger, managed.name, "coordinated", storeResult)
+		result.RemovedObjects += storeResult.Objects
+		result.RemovedBytes += storeResult.Bytes
+		result.SkippedObjects += storeResult.Skipped
+	}
+	return result, nil
 }
 
 func logGC(logger *slog.Logger, repositoryName, trigger string, result cache.GCResult) {
