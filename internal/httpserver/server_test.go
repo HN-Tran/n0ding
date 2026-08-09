@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/HN-Tran/n0ding/internal/cache"
 	"github.com/HN-Tran/n0ding/internal/config"
+	"github.com/HN-Tran/n0ding/internal/maintenance"
 )
 
 func TestStatusAndSetupEndpoints(t *testing.T) {
@@ -60,6 +62,53 @@ func TestStatusAndSetupEndpoints(t *testing.T) {
 	handler.ServeHTTP(setupResponse, setupRequest)
 	if got := setupResponse.Body.String(); got != "npm config set registry http://packages.test/npm/\n" {
 		t.Fatalf("setup snippet = %q", got)
+	}
+}
+
+func TestOperatorEndpointReportsBoundedStorageAndGC(t *testing.T) {
+	server, err := New(config.Config{
+		Server: config.Server{PublicBaseURL: "http://packages.test"},
+		Storage: config.Storage{
+			Path:          t.TempDir(),
+			MaxAge:        time.Hour,
+			GCInterval:    time.Hour,
+			MaxBytes:      1_000,
+			HighWatermark: 0.9,
+			LowWatermark:  0.75,
+			MinFreeBytes:  1,
+			StaleTempAge:  time.Hour,
+		},
+		Repositories: []config.Repository{{
+			Name: "npm", Type: "npm", Path: "/npm/",
+			Upstream: "https://registry.npmjs.org", TTL: time.Hour,
+		}},
+	}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/operator", nil)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response operatorResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != "ok" || !response.Storage.Bounded || response.Storage.MaxBytes != 1_000 {
+		t.Fatalf("response = %#v", response)
+	}
+	if response.GC.State != "idle" || response.GC.Last == nil || response.GC.Last.Trigger != maintenance.TriggerStartup {
+		t.Fatalf("GC snapshot = %#v", response.GC)
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/operator", nil)
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusMethodNotAllowed || recorder.Header().Get("Allow") != "GET, HEAD" {
+		t.Fatalf("POST status=%d allow=%q", recorder.Code, recorder.Header().Get("Allow"))
 	}
 }
 

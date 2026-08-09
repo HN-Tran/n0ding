@@ -35,6 +35,7 @@ type Server struct {
 	gcInterval   time.Duration
 	logger       *slog.Logger
 	storage      *storagecontroller.Controller
+	storagePath  string
 	gc           *maintenance.Coordinator
 }
 
@@ -50,16 +51,33 @@ type statusResponse struct {
 	Repositories []repository.Snapshot `json:"repositories"`
 }
 
+type operatorResponse struct {
+	GeneratedAt   time.Time             `json:"generated_at"`
+	Version       string                `json:"version"`
+	Status        string                `json:"status"`
+	UptimeSeconds int64                 `json:"uptime_seconds"`
+	Storage       operatorStorage       `json:"storage"`
+	GC            maintenance.Snapshot  `json:"gc"`
+	Repositories  []repository.Snapshot `json:"repositories"`
+}
+
+type operatorStorage struct {
+	storagecontroller.Snapshot
+	FilesystemFreeBytes int64 `json:"filesystem_free_bytes"`
+	Bounded             bool  `json:"bounded"`
+}
+
 func New(cfg config.Config, version string, logger *slog.Logger) (*Server, error) {
 	server := &Server{
-		mux:        http.NewServeMux(),
-		version:    version,
-		publicURL:  strings.TrimRight(cfg.Server.PublicBaseURL, "/"),
-		started:    time.Now(),
-		byName:     make(map[string]repository.Handler),
-		maxAge:     cfg.Storage.MaxAge,
-		gcInterval: cfg.Storage.GCInterval,
-		logger:     logger,
+		mux:         http.NewServeMux(),
+		version:     version,
+		publicURL:   strings.TrimRight(cfg.Server.PublicBaseURL, "/"),
+		started:     time.Now(),
+		byName:      make(map[string]repository.Handler),
+		maxAge:      cfg.Storage.MaxAge,
+		gcInterval:  cfg.Storage.GCInterval,
+		logger:      logger,
+		storagePath: cfg.Storage.Path,
 	}
 
 	for _, configuredRepository := range cfg.Repositories {
@@ -163,6 +181,7 @@ func New(cfg config.Config, version string, logger *slog.Logger) (*Server, error
 
 	server.mux.HandleFunc("/healthz", server.health)
 	server.mux.HandleFunc("/api/v1/status", server.status)
+	server.mux.HandleFunc("/api/v1/operator", server.operatorStatus)
 	server.mux.HandleFunc("/api/v1/repositories/", server.repositoryAPI)
 	server.mux.HandleFunc("/metrics", server.metrics)
 	server.mux.HandleFunc("/", server.dashboard)
@@ -250,6 +269,44 @@ func (s *Server) status(writer http.ResponseWriter, request *http.Request) {
 		Status:       "ok",
 		Uptime:       time.Since(s.started).Round(time.Second).String(),
 		Repositories: snapshots,
+	})
+}
+
+func (s *Server) operatorStatus(writer http.ResponseWriter, request *http.Request) {
+	if request.URL.Path != "/api/v1/operator" {
+		http.NotFound(writer, request)
+		return
+	}
+	if request.Method != http.MethodGet && request.Method != http.MethodHead {
+		writer.Header().Set("Allow", "GET, HEAD")
+		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	repositories := make([]repository.Snapshot, 0, len(s.repositories))
+	for _, configured := range s.repositories {
+		repositories = append(repositories, configured.Snapshot())
+	}
+	storageState := operatorStorage{}
+	status := "degraded"
+	if s.storage != nil {
+		storageState.Snapshot = s.storage.Snapshot()
+		storageState.Bounded = true
+		status = "ok"
+	}
+	if freeBytes, err := storagecontroller.FreeBytes(s.storagePath); err == nil {
+		storageState.FilesystemFreeBytes = freeBytes
+	} else {
+		status = "degraded"
+		s.logger.Warn("read operator filesystem capacity", "error", err)
+	}
+	writeJSON(writer, operatorResponse{
+		GeneratedAt:   time.Now().UTC(),
+		Version:       s.version,
+		Status:        status,
+		UptimeSeconds: int64(time.Since(s.started).Seconds()),
+		Storage:       storageState,
+		GC:            s.gc.Snapshot(),
+		Repositories:  repositories,
 	})
 }
 
