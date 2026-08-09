@@ -1,8 +1,9 @@
 # Security policy
 
-n0ding v0.1.x is a preview for trusted-network evaluation. Do not expose it
-directly to the public internet or treat it as a production supply-chain
-security control.
+n0ding v0.1.x is a preview. Keep the default deployment on localhost or a
+trusted network. An internet-reachable evaluation must use the shipped
+authenticated Caddy profile or an equivalent reviewed TLS/authentication edge.
+Do not treat it as a production supply-chain security control.
 
 ## Supported versions
 
@@ -40,7 +41,9 @@ a best-effort basis.
 
 ## Current security boundaries
 
-- There is no n0ding client authentication or authorization.
+- There is no native n0ding user database, RBAC, or multi-tenancy. The shipped
+  public-VPS profile provides one shared credential at the Caddy edge and
+  removes it before forwarding requests to n0ding.
 - npm upstream authorization is disabled by default.
 - OCI Bearer credentials are forwarded to the configured upstream. A cached OCI
   response is served only after the upstream authorizes the same request with a
@@ -68,6 +71,8 @@ a best-effort basis.
 - Range responses are proxied but not partially cached.
 - The local cache supports one n0ding process, not shared-volume writers.
 
-Bind n0ding to a trusted interface, terminate TLS at a trusted reverse proxy,
-and review [docs/operations.md](docs/operations.md) and the
+Do not publish n0ding's container port directly. Use the
+[authenticated public-VPS profile](docs/public-vps.md), or bind n0ding to a
+trusted interface and terminate TLS/authentication at a reviewed reverse
+proxy. Review [docs/operations.md](docs/operations.md) and the
 [threat model](docs/threat-model.md) before deployment.
