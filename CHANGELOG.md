@@ -10,6 +10,18 @@ All notable changes to n0ding are documented in this file. The project follows
 - Classified downstream client cancellations separately from repository
   failures in JSON status, Prometheus metrics, and logs for npm, OCI, and
   PyPI proxies.
+- Added a cross-ecosystem release-candidate smoke for npm lockfile installs,
+  pip, uv, and Docker pulls across a persistent n0ding restart.
+
+### Added
+
+- Added the read-only PyPI Simple API and distribution cache for pip and uv,
+  including HTML/JSON link rewriting, allowed file origins, hash verification,
+  and PEP 658/714 metadata sidecars.
+- Added checksum-verified installers for Linux, macOS, and Windows plus a
+  loopback-safe deployment Compose file.
+- Added a multi-architecture GHCR release workflow with SBOM, provenance, and
+  versioned GitHub Release assets.
 
 ### Security
 

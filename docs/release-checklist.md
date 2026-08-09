@@ -1,8 +1,11 @@
-# v0.1-private roadmap
+# Private-upstream and long-term hardening roadmap
 
-Target: a trustworthy private-use hardening milestone. This is not a public
-release checklist and does not authorize a tag, GitHub Release, image
-publication, or announcement.
+The public-preview criteria are tracked separately in the
+[v0.1.0 release gate](v0.1-release-gate.md). This document retains the stricter
+private-provider, credential-revocation, TLS, Podman, and long-duration work.
+
+Target: a trustworthy private-use hardening milestone. This document does not
+authorize a tag, GitHub Release, image publication, or announcement.
 
 ## Working definition of trustworthy
 

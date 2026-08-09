@@ -13,8 +13,8 @@ cleanup() {
   docker rm -f "$dind" "$server" >/dev/null 2>&1 || true
   docker volume rm "$volume" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
-  docker run --rm -v "$work:/work" alpine:3.22 rm -rf /work/. >/dev/null 2>&1 || true
-  rm -rf "$work"
+  docker run --rm -v "$work:/work" alpine:3.22 chmod -R a+rwX /work >/dev/null 2>&1 || true
+  rm -rf "$work" || true
 }
 trap cleanup EXIT INT TERM
 

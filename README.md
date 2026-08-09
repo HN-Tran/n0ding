@@ -30,10 +30,9 @@ npm / pip / uv / Docker
 | Docker / OCI | `/v2/` | Indexes, manifests, configs and blobs |
 
 > [!WARNING]
-> **v0.1 is a private hardening phase, not a public release.** It is intended
-> for evaluation on trusted networks. It has not completed the security,
-> recovery, or long-running reliability work required for a production
-> supply-chain service.
+> **v0.1 is a public preview for trusted-network evaluation.** It has not
+> completed the security and long-running reliability work required for a
+> production supply-chain service. Do not expose it directly to the internet.
 
 ## Why n0ding
 
