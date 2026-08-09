@@ -2,8 +2,10 @@ package ociproxy
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -51,11 +53,12 @@ type Proxy struct {
 }
 
 type counters struct {
-	requests      atomic.Uint64
-	hits          atomic.Uint64
-	misses        atomic.Uint64
-	errors        atomic.Uint64
-	rangeRequests atomic.Uint64
+	requests       atomic.Uint64
+	hits           atomic.Uint64
+	misses         atomic.Uint64
+	errors         atomic.Uint64
+	clientCanceled atomic.Uint64
+	rangeRequests  atomic.Uint64
 }
 
 func New(options Options) (*Proxy, error) {
@@ -158,18 +161,19 @@ func (p *Proxy) Snapshot() repository.Snapshot {
 		p.logger.Warn("cache size scan failed", "repository", p.name, "error", err)
 	}
 	return repository.Snapshot{
-		Name:          p.name,
-		Type:          "oci",
-		Path:          p.path,
-		Upstream:      httppolicy.PublicUpstreamURL(p.upstream),
-		Requests:      p.stats.requests.Load(),
-		CacheHits:     hits,
-		CacheMisses:   misses,
-		Errors:        p.stats.errors.Load(),
-		RangeRequests: p.stats.rangeRequests.Load(),
-		HitRatio:      ratio,
-		StorageBytes:  storageBytes,
-		CacheObjects:  objects,
+		Name:           p.name,
+		Type:           "oci",
+		Path:           p.path,
+		Upstream:       httppolicy.PublicUpstreamURL(p.upstream),
+		Requests:       p.stats.requests.Load(),
+		CacheHits:      hits,
+		CacheMisses:    misses,
+		Errors:         p.stats.errors.Load(),
+		ClientCanceled: p.stats.clientCanceled.Load(),
+		RangeRequests:  p.stats.rangeRequests.Load(),
+		HitRatio:       ratio,
+		StorageBytes:   storageBytes,
+		CacheObjects:   objects,
 	}
 }
 
@@ -420,6 +424,16 @@ func (p *Proxy) passThrough(
 }
 
 func (p *Proxy) fail(writer http.ResponseWriter, request *http.Request, status int, message string, err error) {
+	if errors.Is(err, context.Canceled) || errors.Is(request.Context().Err(), context.Canceled) {
+		p.stats.clientCanceled.Add(1)
+		p.logger.Debug(
+			"client canceled request",
+			"repository", p.name,
+			"method", request.Method,
+			"path", request.URL.Path,
+		)
+		return
+	}
 	p.stats.errors.Add(1)
 	p.logger.Error(
 		message,

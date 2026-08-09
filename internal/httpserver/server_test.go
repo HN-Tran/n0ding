@@ -41,8 +41,18 @@ func TestStatusAndSetupEndpoints(t *testing.T) {
 	statusRequest := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
 	statusResponse := httptest.NewRecorder()
 	handler.ServeHTTP(statusResponse, statusRequest)
-	if statusResponse.Code != http.StatusOK || !strings.Contains(statusResponse.Body.String(), `"version": "test"`) {
+	if statusResponse.Code != http.StatusOK ||
+		!strings.Contains(statusResponse.Body.String(), `"version": "test"`) ||
+		!strings.Contains(statusResponse.Body.String(), `"client_canceled": 0`) {
 		t.Fatalf("status: code=%d body=%s", statusResponse.Code, statusResponse.Body.String())
+	}
+
+	metricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	metricsResponse := httptest.NewRecorder()
+	handler.ServeHTTP(metricsResponse, metricsRequest)
+	if metricsResponse.Code != http.StatusOK ||
+		!strings.Contains(metricsResponse.Body.String(), `n0ding_repository_client_canceled_total{repository="npm",type="npm"} 0`) {
+		t.Fatalf("metrics: code=%d body=%s", metricsResponse.Code, metricsResponse.Body.String())
 	}
 
 	setupRequest := httptest.NewRequest(http.MethodGet, "/api/v1/repositories/npm/setup", nil)

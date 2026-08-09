@@ -5,6 +5,12 @@ All notable changes to n0ding are documented in this file. The project follows
 
 ## [Unreleased]
 
+### Changed
+
+- Classified downstream client cancellations separately from repository
+  failures in JSON status, Prometheus metrics, and logs for npm, OCI, and
+  PyPI proxies.
+
 ### Security
 
 - Added one shared request/response header policy for npm and OCI.

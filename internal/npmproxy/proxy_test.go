@@ -2,6 +2,7 @@ package npmproxy
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +19,17 @@ import (
 
 	"github.com/HN-Tran/n0ding/internal/cache"
 )
+
+func TestClientCancellationIsNotCountedAsRepositoryError(t *testing.T) {
+	proxy := &Proxy{name: "npm", logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	request := httptest.NewRequest(http.MethodGet, "http://n0ding.test/npm/npm", nil)
+
+	proxy.fail(httptest.NewRecorder(), request, 499, "upstream request failed", context.Canceled)
+
+	if canceled, failures := proxy.stats.clientCanceled.Load(), proxy.stats.errors.Load(); canceled != 1 || failures != 0 {
+		t.Fatalf("client_canceled=%d errors=%d", canceled, failures)
+	}
+}
 
 func TestProxyRewritesAndCachesNPMMetadata(t *testing.T) {
 	var requests atomic.Int64

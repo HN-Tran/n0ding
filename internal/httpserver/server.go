@@ -238,6 +238,7 @@ func (s *Server) metrics(writer http.ResponseWriter, request *http.Request) {
 		fmt.Fprintf(writer, "n0ding_repository_cache_hits_total{%s} %d\n", label, snapshot.CacheHits)
 		fmt.Fprintf(writer, "n0ding_repository_cache_misses_total{%s} %d\n", label, snapshot.CacheMisses)
 		fmt.Fprintf(writer, "n0ding_repository_errors_total{%s} %d\n", label, snapshot.Errors)
+		fmt.Fprintf(writer, "n0ding_repository_client_canceled_total{%s} %d\n", label, snapshot.ClientCanceled)
 		fmt.Fprintf(writer, "n0ding_repository_range_requests_total{%s} %d\n", label, snapshot.RangeRequests)
 		fmt.Fprintf(writer, "n0ding_repository_storage_bytes{%s} %d\n", label, snapshot.StorageBytes)
 		fmt.Fprintf(writer, "n0ding_repository_cache_objects{%s} %d\n", label, snapshot.CacheObjects)
