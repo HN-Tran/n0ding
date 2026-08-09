@@ -181,7 +181,7 @@ func (p *Proxy) serveSimple(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (p *Proxy) serveFile(writer http.ResponseWriter, request *http.Request) {
-	target, expectedSHA256, err := p.fileTargetURL(request.URL.Query())
+	target, expectedSHA256, err := p.fileTargetURL(request.URL)
 	if err != nil {
 		p.fail(writer, request, http.StatusBadRequest, "invalid PyPI file URL", err)
 		return
@@ -250,7 +250,8 @@ func (p *Proxy) simpleTargetURL(requestURL *url.URL) (*url.URL, error) {
 	return target, nil
 }
 
-func (p *Proxy) fileTargetURL(query url.Values) (*url.URL, string, error) {
+func (p *Proxy) fileTargetURL(requestURL *url.URL) (*url.URL, string, error) {
+	query := requestURL.Query()
 	raw := query.Get("url")
 	if raw == "" {
 		return nil, "", errors.New("missing url")
@@ -268,7 +269,23 @@ func (p *Proxy) fileTargetURL(query url.Values) (*url.URL, string, error) {
 	if !p.fileOriginAllowed(target) {
 		return nil, "", errors.New("file origin is not allowed")
 	}
+	metadataRequest := strings.HasSuffix(path.Base(requestURL.Path), ".metadata") &&
+		!strings.HasSuffix(path.Base(target.Path), ".metadata")
+	if metadataRequest {
+		// PEP 658/714 clients form the metadata sidecar URL by appending
+		// `.metadata` to the distribution link. The original upstream URL is
+		// carried in our query string, so mirror that suffix onto the target.
+		target.Path += ".metadata"
+		if target.RawPath != "" {
+			target.RawPath += ".metadata"
+		}
+	}
 	expectedSHA256 := strings.ToLower(strings.TrimSpace(query.Get("sha256")))
+	if metadataRequest {
+		// A hash fragment on the distribution link covers the wheel/sdist, not
+		// its metadata sidecar. The client validates the separate metadata hash.
+		expectedSHA256 = ""
+	}
 	if expectedSHA256 != "" {
 		if len(expectedSHA256) != sha256.Size*2 {
 			return nil, "", errors.New("sha256 must be 64 lowercase hex characters")

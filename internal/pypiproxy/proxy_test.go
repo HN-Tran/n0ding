@@ -146,6 +146,38 @@ func TestProxyRewritesSimpleJSON(t *testing.T) {
 	}
 }
 
+func TestProxyServesPEP658MetadataSidecar(t *testing.T) {
+	metadataBody := []byte("Metadata-Version: 2.1\nName: tiny\nVersion: 1.0.0\n")
+	var requestedPath string
+	files := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requestedPath = request.URL.Path
+		_, _ = writer.Write(metadataBody)
+	}))
+	defer files.Close()
+
+	upstream := httptest.NewServer(http.NotFoundHandler())
+	defer upstream.Close()
+	proxy, err := newTestProxy(t, upstream.URL, files.URL, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	distributionURL := "http://n0ding.test/pypi/files/tiny-1.0.0-py3-none-any.whl?url=" +
+		urlQueryEscape(files.URL+"/packages/tiny-1.0.0-py3-none-any.whl") +
+		"&sha256=" + strings.Repeat("0", 64)
+	metadataURL := strings.Replace(distributionURL, ".whl?", ".whl.metadata?", 1)
+	request := httptest.NewRequest(http.MethodGet, metadataURL, nil)
+	response := httptest.NewRecorder()
+	proxy.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || !bytes.Equal(response.Body.Bytes(), metadataBody) {
+		t.Fatalf("status=%d body=%q", response.Code, response.Body.String())
+	}
+	if requestedPath != "/packages/tiny-1.0.0-py3-none-any.whl.metadata" {
+		t.Fatalf("metadata upstream path = %q", requestedPath)
+	}
+}
+
 func TestProxyRejectsUnallowedFileOrigin(t *testing.T) {
 	upstream := httptest.NewServer(http.NotFoundHandler())
 	defer upstream.Close()
