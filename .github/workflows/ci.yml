@@ -210,6 +210,21 @@ jobs:
       - name: Verify OCI archive
         run: test -s "${RUNNER_TEMP}/n0ding.oci.tar"
 
+  installer-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Run staged installer smoke
+        run: python tools/installer-smoke.py
+
   backup-restore:
     runs-on: ubuntu-latest
     timeout-minutes: 20

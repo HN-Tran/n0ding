@@ -24,7 +24,8 @@ case "$VERSION" in
   *) IMAGE_VERSION=$VERSION ;;
 esac
 
-ASSET_BASE="https://github.com/$REPOSITORY/releases/download/$VERSION"
+ASSET_BASE="${N0DING_RELEASE_BASE_URL:-https://github.com/$REPOSITORY/releases/download/$VERSION}"
+HEALTH_URL="${N0DING_HEALTH_URL:-http://localhost:8080/healthz}"
 mkdir -p "$INSTALL_DIR"
 
 download() {
@@ -70,7 +71,7 @@ docker compose --project-directory "$INSTALL_DIR" pull
 docker compose --project-directory "$INSTALL_DIR" up -d
 
 attempt=0
-until curl -fsS "http://localhost:8080/healthz" >/dev/null 2>&1; do
+until curl -fsS "$HEALTH_URL" >/dev/null 2>&1; do
   attempt=$((attempt + 1))
   [ "$attempt" -lt 30 ] || fail "Service did not become healthy; run: docker compose --project-directory $INSTALL_DIR logs"
   sleep 2
