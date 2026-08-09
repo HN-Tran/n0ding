@@ -68,9 +68,18 @@ func (c *Controller) Reserve(bytes, filesystemFreeBytes int64) *Reservation {
 	return &Reservation{controller: c, bytes: bytes}
 }
 
+func (c *Controller) RecordBypass(bytes int64) {
+	c.mu.Lock()
+	c.bypassObjects = saturatingAdd(c.bypassObjects, 1)
+	if bytes > 0 {
+		c.bypassBytes = saturatingAdd(c.bypassBytes, bytes)
+	}
+	c.mu.Unlock()
+}
+
 // Commit converts the reservation into committed usage. It is safe to call
 // Commit or Release more than once; only the first call has an effect.
-func (r *Reservation) Commit(actualBytes int64) bool {
+func (r *Reservation) Commit(actualBytes, replacedBytes int64) bool {
 	if r == nil {
 		return false
 	}
@@ -79,7 +88,8 @@ func (r *Reservation) Commit(actualBytes int64) bool {
 		r.controller.mu.Lock()
 		defer r.controller.mu.Unlock()
 		r.controller.reservedBytes -= r.bytes
-		if actualBytes >= 0 && actualBytes <= r.bytes {
+		if actualBytes >= 0 && actualBytes <= r.bytes && replacedBytes >= 0 && replacedBytes <= r.controller.committedBytes {
+			r.controller.committedBytes -= replacedBytes
 			r.controller.committedBytes = saturatingAdd(r.controller.committedBytes, actualBytes)
 			committed = true
 		}

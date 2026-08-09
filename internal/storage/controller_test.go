@@ -70,10 +70,10 @@ func TestControllerCommitAndPressure(t *testing.T) {
 	if !controller.Snapshot().Pressure {
 		t.Fatal("expected pressure while reservation reaches high watermark")
 	}
-	if !reservation.Commit(9) {
+	if !reservation.Commit(9, 0) {
 		t.Fatal("valid reservation did not commit")
 	}
-	reservation.Commit(9)
+	reservation.Commit(9, 0)
 	snapshot := controller.Snapshot()
 	if snapshot.CommittedBytes != 89 || snapshot.ReservedBytes != 0 {
 		t.Fatalf("snapshot = %#v", snapshot)
@@ -86,10 +86,21 @@ func TestControllerRejectsCommitLargerThanReservation(t *testing.T) {
 	if reservation == nil {
 		t.Fatal("reservation rejected")
 	}
-	if reservation.Commit(11) {
+	if reservation.Commit(11, 0) {
 		t.Fatal("oversized commit accepted")
 	}
 	if snapshot := controller.Snapshot(); snapshot.CommittedBytes != 0 || snapshot.ReservedBytes != 0 {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+}
+
+func TestControllerReplacementUsesNetCommittedBytes(t *testing.T) {
+	controller := NewController(100, 0.9, 0.75, 0, 80)
+	reservation := controller.Reserve(10, 1_000)
+	if reservation == nil || !reservation.Commit(10, 20) {
+		t.Fatal("replacement did not commit")
+	}
+	if snapshot := controller.Snapshot(); snapshot.CommittedBytes != 70 {
 		t.Fatalf("snapshot = %#v", snapshot)
 	}
 }

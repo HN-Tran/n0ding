@@ -10,20 +10,31 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/HN-Tran/n0ding/internal/httppolicy"
+	"github.com/HN-Tran/n0ding/internal/storage"
 )
 
 type Store struct {
-	root    string
-	now     func() time.Time
-	mu      sync.RWMutex
-	bytes   atomic.Int64
-	objects atomic.Int64
+	root       string
+	now        func() time.Time
+	mu         sync.RWMutex
+	bytes      atomic.Int64
+	objects    atomic.Int64
+	controller *storage.Controller
+	freeBytes  func(string) (int64, error)
+}
+
+func (s *Store) SetController(controller *storage.Controller) {
+	s.mu.Lock()
+	s.controller = controller
+	s.freeBytes = storage.FreeBytes
+	s.mu.Unlock()
 }
 
 const maxMetadataBytes = 1 << 20
@@ -127,6 +138,26 @@ func (s *Store) PutStreamVerified(
 	downstream io.Writer,
 	verify func(written int64) error,
 ) error {
+	var reservation *storage.Reservation
+	expectedBytes, sizeKnown := contentLength(metadata.Header)
+	if s.controller != nil {
+		freeBytes, err := s.freeBytes(s.root)
+		if err != nil {
+			return fmt.Errorf("read filesystem capacity: %w", err)
+		}
+		if !sizeKnown {
+			s.controller.RecordBypass(0)
+			_, err := io.Copy(downstream, source)
+			return err
+		}
+		reservation = s.controller.Reserve(expectedBytes, freeBytes)
+		if reservation == nil {
+			_, err := io.Copy(downstream, source)
+			return err
+		}
+		defer reservation.Release()
+	}
+
 	bodyPath, metadataPath := s.paths(key)
 	directory := filepath.Dir(bodyPath)
 	if err := os.MkdirAll(directory, 0o755); err != nil {
@@ -147,7 +178,12 @@ func (s *Store) PutStreamVerified(
 		}
 	}()
 
-	written, err := io.Copy(io.MultiWriter(bodyTemp, downstream), source)
+	sink := &boundedCacheWriter{cache: bodyTemp, downstream: downstream, limit: expectedBytes, enabled: reservation != nil}
+	if s.controller == nil {
+		sink.enabled = true
+		sink.limit = -1
+	}
+	written, err := io.Copy(sink, source)
 	if err != nil {
 		return fmt.Errorf("stream cache body: %w", err)
 	}
@@ -161,6 +197,10 @@ func (s *Store) PutStreamVerified(
 		if err := verify(written); err != nil {
 			return fmt.Errorf("verify cache body: %w", err)
 		}
+	}
+	if sink.overflow {
+		s.controller.RecordBypass(written)
+		return nil
 	}
 
 	metadata.StoredAt = s.now().UTC()
@@ -216,6 +256,10 @@ func (s *Store) PutStreamVerified(
 		return fmt.Errorf("commit cache metadata: %w", err)
 	}
 	keepMetadata = true
+	if reservation != nil && !reservation.Commit(written, previousBytes) {
+		_ = os.Remove(generationPath)
+		return fmt.Errorf("cache body exceeded reserved capacity")
+	}
 	s.bytes.Add(written - previousBytes)
 	if !previousValid {
 		s.objects.Add(1)
@@ -224,6 +268,37 @@ func (s *Store) PutStreamVerified(
 		_ = os.Remove(previousBodyPath)
 	}
 	return nil
+}
+
+func contentLength(header http.Header) (int64, bool) {
+	raw := header.Get("Content-Length")
+	if raw == "" {
+		return 0, false
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	return value, err == nil && value > 0
+}
+
+type boundedCacheWriter struct {
+	cache      io.Writer
+	downstream io.Writer
+	limit      int64
+	written    int64
+	enabled    bool
+	overflow   bool
+}
+
+func (w *boundedCacheWriter) Write(body []byte) (int, error) {
+	written, err := w.downstream.Write(body)
+	if written > 0 && w.enabled && !w.overflow {
+		if w.limit >= 0 && int64(written) > w.limit-w.written {
+			w.overflow = true
+		} else if _, cacheErr := w.cache.Write(body[:written]); cacheErr != nil {
+			return written, cacheErr
+		}
+		w.written += int64(written)
+	}
+	return written, err
 }
 
 func (s *Store) Size() (bytes int64, objects int64, err error) {

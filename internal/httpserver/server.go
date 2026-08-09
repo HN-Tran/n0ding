@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"log/slog"
+	"math"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/HN-Tran/n0ding/internal/ociproxy"
 	"github.com/HN-Tran/n0ding/internal/pypiproxy"
 	"github.com/HN-Tran/n0ding/internal/repository"
+	storagecontroller "github.com/HN-Tran/n0ding/internal/storage"
 )
 
 type Server struct {
@@ -31,6 +33,7 @@ type Server struct {
 	maxAge       time.Duration
 	gcInterval   time.Duration
 	logger       *slog.Logger
+	storage      *storagecontroller.Controller
 }
 
 type managedStore struct {
@@ -130,6 +133,30 @@ func New(cfg config.Config, version string, logger *slog.Logger) (*Server, error
 		server.mux.Handle(configuredRepository.Path, proxy)
 		if pypi, ok := proxy.(*pypiproxy.Proxy); ok {
 			server.mux.Handle(pypi.FilePath(), proxy)
+		}
+	}
+	var committedBytes int64
+	for _, managed := range server.stores {
+		bytes, _, sizeErr := managed.store.Size()
+		if sizeErr != nil {
+			return nil, fmt.Errorf("repository %q: read cache usage: %w", managed.name, sizeErr)
+		}
+		if bytes > math.MaxInt64-committedBytes {
+			committedBytes = math.MaxInt64
+		} else {
+			committedBytes += bytes
+		}
+	}
+	if cfg.Storage.MaxBytes > 0 || cfg.Storage.MinFreeBytes > 0 {
+		server.storage = storagecontroller.NewController(
+			cfg.Storage.MaxBytes,
+			cfg.Storage.HighWatermark,
+			cfg.Storage.LowWatermark,
+			cfg.Storage.MinFreeBytes,
+			committedBytes,
+		)
+		for _, managed := range server.stores {
+			managed.store.SetController(server.storage)
 		}
 	}
 

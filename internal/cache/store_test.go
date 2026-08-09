@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/HN-Tran/n0ding/internal/storage"
 )
 
 func TestPutAndLookup(t *testing.T) {
@@ -108,6 +110,51 @@ func TestReplacementPublishesNewGenerationAtomically(t *testing.T) {
 	oldBody, err := io.ReadAll(oldEntry.Body)
 	if err != nil || string(oldBody) != "first" {
 		t.Fatalf("open old reader changed: body=%q err=%v", oldBody, err)
+	}
+}
+
+func TestQuotaBypassesUnknownLengthWithoutWritingTemp(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := storage.NewController(100, 0.9, 0.75, 0, 0)
+	store.SetController(controller)
+	store.freeBytes = func(string) (int64, error) { return 1_000, nil }
+	var downstream bytes.Buffer
+	if err := store.PutStream("unknown", Metadata{Status: http.StatusOK}, strings.NewReader("payload"), &downstream); err != nil {
+		t.Fatal(err)
+	}
+	if downstream.String() != "payload" {
+		t.Fatalf("downstream = %q", downstream.String())
+	}
+	if _, found, err := store.Lookup("unknown", time.Hour); err != nil || found {
+		t.Fatalf("unknown length cached: found=%v err=%v", found, err)
+	}
+}
+
+func TestQuotaDiscardsUnderstatedBodyButCompletesDownstream(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := storage.NewController(100, 0.9, 0.75, 0, 0)
+	store.SetController(controller)
+	store.freeBytes = func(string) (int64, error) { return 1_000, nil }
+	metadata := Metadata{Status: http.StatusOK, Header: http.Header{"Content-Length": []string{"3"}}}
+	var downstream bytes.Buffer
+	if err := store.PutStream("understated", metadata, strings.NewReader("payload"), &downstream); err != nil {
+		t.Fatal(err)
+	}
+	if downstream.String() != "payload" {
+		t.Fatalf("downstream = %q", downstream.String())
+	}
+	if _, found, err := store.Lookup("understated", time.Hour); err != nil || found {
+		t.Fatalf("understated body cached: found=%v err=%v", found, err)
+	}
+	snapshot := controller.Snapshot()
+	if snapshot.ReservedBytes != 0 || snapshot.BypassObjects != 1 || snapshot.BypassBytes != 7 {
+		t.Fatalf("snapshot = %#v", snapshot)
 	}
 }
 
