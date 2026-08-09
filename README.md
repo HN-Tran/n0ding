@@ -1,7 +1,33 @@
-# n0ding
+# n0ding — lightweight artifact caching for npm, PyPI, and OCI
 
-> n0ding is a small, self-hosted, read-only pull-through cache for npm, OCI,
-> and PyPI artifacts, built for homelabs and small technical teams.
+[![CI](https://github.com/HN-Tran/n0ding/actions/workflows/ci.yml/badge.svg)](https://github.com/HN-Tran/n0ding/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+![Status](https://img.shields.io/badge/status-private%20alpha-orange)
+
+**n0ding is an open-source, self-hosted pull-through cache that speeds up and
+centralizes npm, pip/uv, and Docker/OCI downloads behind one small service.**
+
+It is aimed at homelabs, CI runners, developer workstations, and small
+technical teams that need artifact caching without operating the full feature
+set of repository managers such as Sonatype Nexus Repository or JFrog
+Artifactory. n0ding is deliberately read-only: it caches downloads but does not
+currently provide package publishing, users, or RBAC.
+
+```text
+npm / pip / uv / Docker
+           |
+           v
+        n0ding  ---- persistent local cache
+           |
+           v
+ npmjs.org / PyPI / Docker Hub
+```
+
+| Ecosystem | Client path | Cached content |
+|---|---|---|
+| npm | `/npm/` | Package metadata and tarballs |
+| PyPI | `/pypi/simple/` | Simple API pages, metadata sidecars, wheels and source archives |
+| Docker / OCI | `/v2/` | Indexes, manifests, configs and blobs |
 
 > [!WARNING]
 > **v0.1 is a private hardening phase, not a public release.** It is intended
@@ -9,15 +35,18 @@
 > recovery, or long-running reliability work required for a production
 > supply-chain service.
 
-## What n0ding is
+## Why n0ding
 
 - One Go binary with one TOML configuration file.
+- One endpoint for three common package ecosystems.
 - A persistent local filesystem cache for npm metadata/tarballs, OCI manifests,
   indexes, configs, blobs, and PyPI Simple API pages/distribution files.
 - Compatible with standard npm, Docker/OCI, pip, and uv pull/install clients;
   no client plugin is required.
 - Config-first, Docker Compose-friendly, observable through health, JSON status,
   and Prometheus-compatible metrics endpoints.
+- Small enough for a homelab, explicit enough for repeatable CI and private
+  team deployments.
 - Deliberately narrow today: read-only package loading is the implemented
   protocol scope.
 
@@ -31,7 +60,7 @@
 - Not a replacement for a production-grade artifact manager.
 - Not a Maven, NuGet, Helm, or general artifact cache.
 
-## Quickstart with Docker Compose
+## 60-second local evaluation
 
 Requirements: Docker Engine or Docker Desktop with Compose.
 
@@ -43,6 +72,16 @@ docker compose up --build -d
 docker compose ps
 curl http://localhost:8080/healthz
 curl http://localhost:8080/api/v1/status
+```
+
+PowerShell uses the same Docker commands and `curl.exe`:
+
+```powershell
+docker compose config --quiet
+docker compose up --build -d
+docker compose ps
+curl.exe http://localhost:8080/healthz
+curl.exe http://localhost:8080/api/v1/status
 ```
 
 The service listens on `http://localhost:8080` and stores its cache in the
@@ -67,6 +106,19 @@ docker compose up --build -d
 See the [operations guide](docs/operations.md) before exposing n0ding outside
 the local machine. For repeated private-alpha self-use, work through the
 [private self-use checklist](docs/private-self-use.md).
+
+After startup, point one or more standard clients at n0ding:
+
+```sh
+npm config set registry http://localhost:8080/npm/
+python -m pip config set global.index-url http://localhost:8080/pypi/simple/
+docker pull localhost:8080/library/alpine:3.20
+```
+
+The Docker command requires the local insecure-registry exception described
+below. npm and pip/uv work immediately over loopback HTTP. On repeated requests,
+responses expose `X-N0ding-Cache: HIT`, and `/api/v1/status` reports cache hits,
+misses, stored objects, bytes, errors, and client cancellations.
 
 ## npm client setup
 
