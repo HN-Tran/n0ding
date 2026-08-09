@@ -156,7 +156,7 @@ seven-day soak.
 - [ ] Test normalized names, trailing-slash redirects, wheels, source
   distributions, yanked files, `Requires-Python`, and metadata sidecars with
   real pip/uv clients.
-- [ ] Run two clean-client installs with pip and uv, including restart and
+- [x] Run two clean-client installs with pip and uv, including restart and
   offline-client-cache isolation.
 - [ ] Test a private PyPI-compatible upstream only after the private-auth model
   is approved.

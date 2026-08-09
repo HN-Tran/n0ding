@@ -19,12 +19,18 @@ implicitly supported.
 | OCI | Docker/Podman | private registry pull | Not verified | Auth/security follow-up |
 | OCI | Docker/Podman | image push | Not implemented | Explicit non-goal for this spike |
 | PyPI | in-process fixtures | Simple HTML/JSON rewrite and file cache | Added 2026-07-27 | Unit coverage rewrites both representations, preserves Simple attributes, allowlists file origins, verifies SHA-256 before cache commit, and keeps authenticated requests uncached |
-| PyPI | pip/uv | package install | Not verified | Real-client evidence remains pending after the initial adapter |
+| PyPI | pip 26.1.2 / uv 0.12.3 | `idna==3.10` wheel install | Verified 2026-08-09 | Both clients installed through n0ding before and after restart using separate empty client caches; the second pass used the persistent server cache and installed-file hashes matched ([Actions run 31315881227](https://github.com/HN-Tran/n0ding/actions/runs/31315881227)) |
 
 Automated tests also exercise the same HTTP behavior against an in-process
 upstream. The real-client check used Node.js 24.18.0 LTS with npm 11.16.0 and
 separate empty npm client caches so that n0ding, rather than npm's local cache,
 had to serve the second requests.
+
+The automated PyPI client check uses Python 3.13, pip and uv with separate
+empty caches and install targets on both passes. It restarts n0ding between
+passes while retaining the server volume, verifies second-pass cache hits and
+an unchanged object count, and compares an installed-file SHA-256. The uv path
+also exercises PEP 658/714 metadata-sidecar retrieval through n0ding.
 
 ## Compatibility-hardening spike
 
