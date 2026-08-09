@@ -36,12 +36,12 @@ def write_assets(directory: Path) -> None:
         "n0ding.toml": '[server]\nlisten = ":8080"\n',
     }
     for name, body in files.items():
-        (directory / name).write_text(body, encoding="utf-8")
+        (directory / name).write_bytes(body.encode("utf-8"))
     checksums = "".join(
         f"{hashlib.sha256(body.encode()).hexdigest()}  {name}\n"
         for name, body in files.items()
     )
-    (directory / "SHA256SUMS").write_text(checksums, encoding="utf-8")
+    (directory / "SHA256SUMS").write_bytes(checksums.encode("utf-8"))
 
 
 def write_fake_docker(directory: Path, log: Path) -> None:
