@@ -1,0 +1,18 @@
+{
+	admin off
+}
+
+{$N0DING_DOMAIN} {
+	encode zstd gzip
+
+	tls {
+		client_auth {
+			mode require_and_verify
+			trust_pool file {
+				pem_file /etc/caddy/client-ca.pem
+			}
+		}
+	}
+
+	reverse_proxy n0ding:8080
+}

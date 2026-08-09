@@ -1,0 +1,22 @@
+listen = ":8080"
+data_dir = "/data"
+max_age = "720h"
+gc_interval = "1h"
+
+[[repositories]]
+name = "npm"
+type = "npm"
+path = "/npm/"
+upstream = "https://registry.npmjs.org"
+
+[[repositories]]
+name = "oci"
+type = "oci"
+path = "/v2/"
+upstream = "https://registry-1.docker.io"
+
+[[repositories]]
+name = "pypi"
+type = "pypi"
+path = "/pypi/simple/"
+upstream = "https://pypi.org/simple"

@@ -1,0 +1,6 @@
+.env
+*.key
+*.csr
+client-ca.pem
+client.pem
+client.crt

@@ -30,9 +30,10 @@ npm / pip / uv / Docker
 | Docker / OCI | `/v2/` | Indexes, manifests, configs and blobs |
 
 > [!WARNING]
-> **v0.1 is a public preview for trusted-network evaluation.** It has not
-> completed the security and long-running reliability work required for a
-> production supply-chain service. Do not expose it directly to the internet.
+> **v0.1 is a public preview.** Keep the default deployment on localhost or a
+> trusted network. Internet-facing evaluation requires the authenticated
+> Caddy profile, a dedicated cache volume, and free-space alerts. It is not a
+> production supply-chain security service.
 
 ## Why n0ding
 
@@ -92,6 +93,11 @@ curl http://localhost:8080/api/v1/status
 See the [deployment guide](docs/deployment.md) for version pinning, shared
 deployment behind TLS, upgrades, logs, backups, and uninstalling.
 
+For an internet-reachable VPS, use the separate
+[authenticated public deployment profile](docs/public-vps.md). It terminates
+TLS, requires one shared credential on every route, strips that credential
+before proxying, and does not publish n0ding's container port directly.
+
 ## Build from source
 
 From the repository checkout:
@@ -133,8 +139,9 @@ $env:N0DING_PUBLIC_URL = "https://packages.example.com"
 docker compose up --build -d
 ```
 
-See the [operations guide](docs/operations.md) before exposing n0ding outside
-the local machine. For repeated preview use, work through the
+Do not expose the source-build Compose file directly. Use the
+[authenticated public deployment profile](docs/public-vps.md) or keep n0ding
+behind a VPN/SSH tunnel. For repeated preview use, work through the
 [private self-use checklist](docs/private-self-use.md).
 
 After startup, point one or more standard clients at n0ding:

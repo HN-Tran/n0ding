@@ -1,0 +1,46 @@
+name: n0ding-public
+
+services:
+  n0ding:
+    image: ${N0DING_IMAGE:?set N0DING_IMAGE to a pinned n0ding release}
+    environment:
+      N0DING_PUBLIC_URL: https://${N0DING_DOMAIN:?set N0DING_DOMAIN}
+    volumes:
+      - n0ding-data:/data
+      - ./n0ding.toml:/etc/n0ding/n0ding.toml:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - backend
+
+  caddy:
+    image: caddy:2.10.0-alpine
+    depends_on:
+      n0ding:
+        condition: service_healthy
+    environment:
+      N0DING_DOMAIN: ${N0DING_DOMAIN:?set N0DING_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./client-ca.pem:/etc/caddy/client-ca.pem:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+    networks:
+      - backend
+
+networks:
+  backend:
+
+volumes:
+  n0ding-data:
+  caddy-data:
+  caddy-config:

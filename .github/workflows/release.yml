@@ -60,7 +60,15 @@ jobs:
         run: |
           cp deploy/compose.yaml compose.yaml
           cp deploy/n0ding.toml n0ding.toml
-          sha256sum compose.yaml n0ding.toml install.sh install.ps1 > SHA256SUMS
+          cp deploy/public/compose.yaml public-compose.yaml
+          cp deploy/public/Caddyfile Caddyfile
+          cp deploy/public/n0ding.toml public-n0ding.toml
+          cp deploy/public/.env.example public.env.example
+          sha256sum \
+            compose.yaml n0ding.toml install.sh install.ps1 \
+            public-compose.yaml Caddyfile public-n0ding.toml \
+            public.env.example \
+            > SHA256SUMS
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -69,4 +77,6 @@ jobs:
             --verify-tag \
             --generate-notes \
             --title "n0ding ${GITHUB_REF_NAME}" \
-            compose.yaml n0ding.toml install.sh install.ps1 SHA256SUMS
+            compose.yaml n0ding.toml install.sh install.ps1 \
+            public-compose.yaml Caddyfile public-n0ding.toml \
+            public.env.example SHA256SUMS
