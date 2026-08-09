@@ -88,15 +88,25 @@ python -m pip install \
 
 Do not commit private keys or certificate-bearing configuration. Store client
 material in the CI secret facility and write it to a temporary protected file.
-The uv mTLS compatibility command will be added after the release client matrix
-records the exact supported uv version.
+uv reads the combined certificate and key from `SSL_CLIENT_CERT`:
+
+```sh
+SSL_CLIENT_CERT=/secure/path/client.pem uv pip install \
+  --index-url https://packages.example.com/pypi/simple/ \
+  requests
+```
 
 ### npm
 
-npm accepts PEM client material through its `cert` and `key` configuration.
-Keep both values in user-level or CI-secret configuration, never a committed
-project `.npmrc`. The exact npm command will be published after the real-client
-mTLS matrix passes.
+npm accepts PEM client material through host-scoped `certfile` and `keyfile`
+settings. Keep both paths in user-level or CI-secret configuration, never a
+committed project `.npmrc`:
+
+```ini
+registry=https://packages.example.com/npm/
+//packages.example.com/npm/:certfile=/secure/path/client.crt
+//packages.example.com/npm/:keyfile=/secure/path/client.key
+```
 
 ### Docker
 

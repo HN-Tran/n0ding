@@ -204,6 +204,18 @@ jobs:
       - name: Exercise npm, pip, uv, and OCI across restart
         run: ./tools/release-candidate-smoke.sh
 
+  public-vps-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --disable-pip-version-check uv
+      - run: docker build --build-arg VERSION=ci --tag n0ding:public-vps-ci .
+      - run: ./tools/public-vps-smoke.sh
+
   multi-arch-image:
     runs-on: ubuntu-latest
     timeout-minutes: 25
