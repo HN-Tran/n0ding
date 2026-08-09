@@ -112,8 +112,8 @@ jobs:
           python -m pip --version
           uv --version
 
-          python -m pip download --no-deps \
-            --dest /tmp/pip-run-1 \
+          python -m pip install --no-deps \
+            --target /tmp/pip-run-1 \
             --cache-dir /tmp/pip-cache-1 \
             --index-url http://localhost:8080/pypi/simple/ \
             idna==3.10
@@ -136,8 +136,8 @@ jobs:
             sleep 2
           done
 
-          python -m pip download --no-deps \
-            --dest /tmp/pip-run-2 \
+          python -m pip install --no-deps \
+            --target /tmp/pip-run-2 \
             --cache-dir /tmp/pip-cache-2 \
             --index-url http://localhost:8080/pypi/simple/ \
             idna==3.10
@@ -167,8 +167,8 @@ jobs:
           print(json.dumps({"before_restart": before, "after_restart": after}, indent=2, sort_keys=True))
           PY
 
-          test "$(sha256sum /tmp/pip-run-1/idna-3.10-py3-none-any.whl | cut -d' ' -f1)" = \
-            "$(sha256sum /tmp/pip-run-2/idna-3.10-py3-none-any.whl | cut -d' ' -f1)"
+          test "$(sha256sum /tmp/pip-run-1/idna/__init__.py | cut -d' ' -f1)" = \
+            "$(sha256sum /tmp/pip-run-2/idna/__init__.py | cut -d' ' -f1)"
 
   backup-restore:
     runs-on: ubuntu-latest
