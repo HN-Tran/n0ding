@@ -554,13 +554,28 @@ function Test-ExportedCache {
     }
 
     $metadataFiles = @(Get-ChildItem -LiteralPath $cacheRoot -Filter "*.json" -File -Recurse)
-    $bodyFiles = @(Get-ChildItem -LiteralPath $cacheRoot -Filter "*.body" -File -Recurse)
+    $bodyFiles = @(Get-ChildItem -LiteralPath $cacheRoot -File -Recurse |
+        Where-Object { $_.Name -match '\.body(?:\.|$)' })
+    $referencedBodies = [Collections.Generic.HashSet[string]]::new(
+        [StringComparer]::OrdinalIgnoreCase
+    )
     foreach ($metadataFile in $metadataFiles) {
         $metadata = Get-Content -LiteralPath $metadataFile.FullName -Raw | ConvertFrom-Json
-        $bodyPath = [IO.Path]::ChangeExtension($metadataFile.FullName, ".body")
+        $bodyFileProperty = $metadata.PSObject.Properties["body_file"]
+        if ($null -ne $bodyFileProperty -and
+            -not [string]::IsNullOrWhiteSpace([string]$bodyFileProperty.Value)) {
+            $bodyName = [string]$bodyFileProperty.Value
+            if ([IO.Path]::GetFileName($bodyName) -ne $bodyName) {
+                throw "Unsafe body_file in cache metadata: $($metadataFile.Name)"
+            }
+            $bodyPath = Join-Path $metadataFile.DirectoryName $bodyName
+        } else {
+            $bodyPath = [IO.Path]::ChangeExtension($metadataFile.FullName, ".body")
+        }
         if (-not (Test-Path -LiteralPath $bodyPath -PathType Leaf)) {
             throw "Complete metadata has no body: $($metadataFile.Name)"
         }
+        $null = $referencedBodies.Add([IO.Path]::GetFullPath($bodyPath))
         $body = Get-Item -LiteralPath $bodyPath
         if ($body.Length -ne [int64]$metadata.content_bytes) {
             throw "Cache body size mismatch in exported state: $($metadataFile.Name)"
@@ -577,8 +592,7 @@ function Test-ExportedCache {
         }
     }
     foreach ($bodyFile in $bodyFiles) {
-        $metadataPath = [IO.Path]::ChangeExtension($bodyFile.FullName, ".json")
-        if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) {
+        if (-not $referencedBodies.Contains([IO.Path]::GetFullPath($bodyFile.FullName))) {
             throw "Exported cache contains an orphan body: $($bodyFile.Name)"
         }
     }
