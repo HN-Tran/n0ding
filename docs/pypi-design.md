@@ -1,13 +1,13 @@
-# PyPI read-only adapter design gate
+# PyPI read-only adapter design
 
-Status: design only; no PyPI runtime support exists.
+Status: initial read-only adapter implemented for private self-use.
 
 PyPI is planned for `v0.1-private`, but it must reuse the shared cache and
 credential-safety foundations instead of becoming a generic reverse proxy.
 
 ## Protocol scope
 
-The adapter should implement the read-only
+The adapter implements the read-only
 [PyPA Simple Repository API](https://packaging.python.org/en/latest/specifications/simple-repository-api/).
 That API has HTML and JSON representations selected through content
 negotiation, normalized project names, trailing-slash behavior, project pages,
@@ -19,72 +19,62 @@ distribution links, optional hash fragments, yanked markers,
 Publishing, the legacy upload API, warehouse administration, search, and
 mirroring the complete project list are out of scope.
 
-## Proposed request surface
+## Request surface
 
 ```text
 /pypi/simple/                     optional root index pass-through/cache
 /pypi/simple/<normalized-name>/   project detail HTML or JSON
-/pypi/files/...                   rewritten distribution and metadata URLs
+/pypi/files/?url=...              rewritten distribution and metadata URLs
 ```
 
-The exact external file path is not decided. PyPI can return absolute,
-relative, or cross-host distribution URLs, so blindly replacing one upstream
-origin is insufficient.
+The original hash fragment remains visible to pip/uv, and n0ding copies a
+supported `sha256` fragment into the query so it can verify the body before
+committing a cached file. PyPI can return absolute, relative, or cross-host
+distribution URLs, so file rewrites are limited to configured allowed origins.
 
-## Blocking design decisions
+## Resolved private-use decisions
 
 ### 1. HTML and JSON rewriting
 
-The JSON representation can be decoded and rewritten with the Go standard
-library. Correct HTML5 rewriting needs a real parser; the standard library has
-no HTML5 parser. Before implementation, choose one of:
-
-- accept `golang.org/x/net/html` as a narrowly justified dependency;
-- require JSON-capable clients and explicitly reject HTML-only compatibility;
-- implement a constrained link proxy that does not parse HTML only if real pip
-  evidence proves it correct.
-
-String replacement is not acceptable for arbitrary HTML.
+The adapter accepts `golang.org/x/net/html` as a narrowly justified dependency
+for Simple API HTML rewriting. JSON responses are decoded and rewritten as
+structured data.
 
 ### 2. Distribution origin policy
 
-Distribution links may use another host. The adapter needs an allowlist derived
-from the configured index, explicit additional origins, or a signed mapping.
-It must not become an open fetch proxy.
+Distribution links may use another host. The adapter allows the configured
+upstream origin and explicit `allowed_file_origins`. It rejects direct
+`/pypi/files/` requests for any other origin.
 
-Redirects must be checked against the same policy and must not forward
-credentials to a different origin.
+Redirects use the shared safe redirect client. Credentials survive only exact
+same-origin redirects.
 
 ### 3. Integrity and immutability
 
-When a file link includes a supported hash fragment, n0ding should verify that
-digest before committing the distribution. The fragment must remain visible to
+When a file link includes a supported SHA-256 hash fragment, n0ding verifies
+that digest before committing the distribution. The fragment remains visible to
 pip/uv after URL rewriting.
 
-For links without a usable hash, decide whether to:
-
-- pass through without caching; or
-- cache with a short TTL and an upstream revalidation rule.
-
-Treating an unhashed filename as immutable is not acceptable.
+Links without a usable hash are cached with the repository TTL and normal
+cache-admission policy. They are not treated as immutable.
 
 ### 4. Content negotiation and cache keys
 
-Project pages vary between HTML and JSON. `Accept` is already part of the cache
-key. Any additional upstream `Vary` field must either be represented in the
-adapter key or cause storage to be skipped by the shared policy.
+Project pages vary between HTML and JSON. `Accept` is part of the cache key.
+Any additional upstream `Vary` field causes storage to be skipped by the
+shared policy.
 
 ### 5. Private upstream authentication
 
-PyPI must not invent a third credential model. It should use the private
-upstream design selected for npm:
+PyPI uses the private upstream design selected for npm:
 
 - explicit supported `Authorization` schemes;
-- authenticated request cache bypass or identity partitioning;
+- authenticated request cache bypass;
 - no cookies, OTPs, or custom secrets forwarded by default;
 - redirect protection and credential canary tests.
 
-Private PyPI support cannot start before the shared private-auth gate.
+Authenticated PyPI requests are forwarded only when `forward_authorization` is
+enabled and they bypass persistent caching.
 
 ## Minimum real-client matrix
 
@@ -99,12 +89,13 @@ Private PyPI support cannot start before the shared private-auth gate.
 - n0ding restart followed by a second clean-client install.
 - One denied private-upstream identity after the auth model exists.
 
-## Implementation gate
+## Remaining evidence gate
 
-Do not add a `pypi` repository type until:
+Before closing `v0.1-private`, fixtures and real-client evidence still need:
 
-1. the five blocking decisions above are resolved in this document;
-2. fixtures cover both selected representation paths and cross-origin links;
-3. cache-key, redirect, and credential behavior have negative tests;
-4. the dependency decision is explicit;
-5. the threat model is updated with the final design.
+1. current pip and uv install runs from empty client caches;
+2. normalized/mixed project names, wheels, sdists, yanked markers,
+   `Requires-Python`, and metadata sidecars;
+3. restart followed by a second clean-client install;
+4. one private PyPI-compatible upstream after the broader private-provider
+   evidence gate is approved.

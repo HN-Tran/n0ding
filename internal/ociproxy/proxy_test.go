@@ -2,6 +2,7 @@ package ociproxy
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -17,6 +18,17 @@ import (
 
 	"github.com/HN-Tran/n0ding/internal/cache"
 )
+
+func TestClientCancellationIsNotCountedAsRepositoryError(t *testing.T) {
+	proxy := &Proxy{name: "oci", logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	request := httptest.NewRequest(http.MethodGet, "http://n0ding.test/v2/library/alpine/manifests/latest", nil)
+
+	proxy.fail(httptest.NewRecorder(), request, 499, "upstream request failed", context.Canceled)
+
+	if canceled, failures := proxy.stats.clientCanceled.Load(), proxy.stats.errors.Load(); canceled != 1 || failures != 0 {
+		t.Fatalf("client_canceled=%d errors=%d", canceled, failures)
+	}
+}
 
 func TestRegistryAuthChallengeIsPreserved(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

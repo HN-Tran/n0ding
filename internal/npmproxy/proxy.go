@@ -2,6 +2,8 @@ package npmproxy
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -48,10 +50,11 @@ type Proxy struct {
 }
 
 type counters struct {
-	requests atomic.Uint64
-	hits     atomic.Uint64
-	misses   atomic.Uint64
-	errors   atomic.Uint64
+	requests       atomic.Uint64
+	hits           atomic.Uint64
+	misses         atomic.Uint64
+	errors         atomic.Uint64
+	clientCanceled atomic.Uint64
 }
 
 func New(options Options) (*Proxy, error) {
@@ -142,17 +145,18 @@ func (p *Proxy) Snapshot() repository.Snapshot {
 		p.logger.Warn("cache size scan failed", "repository", p.name, "error", err)
 	}
 	return repository.Snapshot{
-		Name:         p.name,
-		Type:         "npm",
-		Path:         p.path,
-		Upstream:     httppolicy.PublicUpstreamURL(p.upstream),
-		Requests:     requests,
-		CacheHits:    hits,
-		CacheMisses:  misses,
-		Errors:       p.stats.errors.Load(),
-		HitRatio:     ratio,
-		StorageBytes: storageBytes,
-		CacheObjects: objects,
+		Name:           p.name,
+		Type:           "npm",
+		Path:           p.path,
+		Upstream:       httppolicy.PublicUpstreamURL(p.upstream),
+		Requests:       requests,
+		CacheHits:      hits,
+		CacheMisses:    misses,
+		Errors:         p.stats.errors.Load(),
+		ClientCanceled: p.stats.clientCanceled.Load(),
+		HitRatio:       ratio,
+		StorageBytes:   storageBytes,
+		CacheObjects:   objects,
 	}
 }
 
@@ -300,6 +304,16 @@ func (p *Proxy) serveMetadata(
 }
 
 func (p *Proxy) fail(writer http.ResponseWriter, request *http.Request, status int, message string, err error) {
+	if errors.Is(err, context.Canceled) || errors.Is(request.Context().Err(), context.Canceled) {
+		p.stats.clientCanceled.Add(1)
+		p.logger.Debug(
+			"client canceled request",
+			"repository", p.name,
+			"method", request.Method,
+			"path", request.URL.Path,
+		)
+		return
+	}
 	p.stats.errors.Add(1)
 	p.logger.Error(
 		message,

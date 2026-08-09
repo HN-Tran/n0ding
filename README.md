@@ -1,7 +1,33 @@
-# n0ding
+# n0ding — lightweight artifact caching for npm, PyPI, and OCI
 
-> n0ding is a small, self-hosted, read-only pull-through cache for npm and OCI
-> artifacts, built for homelabs and small technical teams.
+[![CI](https://github.com/HN-Tran/n0ding/actions/workflows/ci.yml/badge.svg)](https://github.com/HN-Tran/n0ding/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+![Status](https://img.shields.io/badge/status-private%20alpha-orange)
+
+**n0ding is an open-source, self-hosted pull-through cache that speeds up and
+centralizes npm, pip/uv, and Docker/OCI downloads behind one small service.**
+
+It is aimed at homelabs, CI runners, developer workstations, and small
+technical teams that need artifact caching without operating the full feature
+set of repository managers such as Sonatype Nexus Repository or JFrog
+Artifactory. n0ding is deliberately read-only: it caches downloads but does not
+currently provide package publishing, users, or RBAC.
+
+```text
+npm / pip / uv / Docker
+           |
+           v
+        n0ding  ---- persistent local cache
+           |
+           v
+ npmjs.org / PyPI / Docker Hub
+```
+
+| Ecosystem | Client path | Cached content |
+|---|---|---|
+| npm | `/npm/` | Package metadata and tarballs |
+| PyPI | `/pypi/simple/` | Simple API pages, metadata sidecars, wheels and source archives |
+| Docker / OCI | `/v2/` | Indexes, manifests, configs and blobs |
 
 > [!WARNING]
 > **v0.1 is a private hardening phase, not a public release.** It is intended
@@ -9,17 +35,20 @@
 > recovery, or long-running reliability work required for a production
 > supply-chain service.
 
-## What n0ding is
+## Why n0ding
 
 - One Go binary with one TOML configuration file.
-- A persistent local filesystem cache for npm metadata/tarballs and OCI
-  manifests, indexes, configs, and blobs.
-- Compatible with standard npm and Docker/OCI pull clients; no client plugin is
-  required.
+- One endpoint for three common package ecosystems.
+- A persistent local filesystem cache for npm metadata/tarballs, OCI manifests,
+  indexes, configs, blobs, and PyPI Simple API pages/distribution files.
+- Compatible with standard npm, Docker/OCI, pip, and uv pull/install clients;
+  no client plugin is required.
 - Config-first, Docker Compose-friendly, observable through health, JSON status,
   and Prometheus-compatible metrics endpoints.
-- Deliberately narrow today: read-only npm and OCI are the implemented protocol
-  scope. PyPI is planned only after its design and private-auth gates close.
+- Small enough for a homelab, explicit enough for repeatable CI and private
+  team deployments.
+- Deliberately narrow today: read-only package loading is the implemented
+  protocol scope.
 
 ## What n0ding is not
 
@@ -29,10 +58,9 @@
 - Not an authentication, user-management, RBAC, scanning, signing, or policy
   system.
 - Not a replacement for a production-grade artifact manager.
-- Not yet a supported PyPI cache, and not a Maven, NuGet, Helm, or general
-  artifact cache.
+- Not a Maven, NuGet, Helm, or general artifact cache.
 
-## Quickstart with Docker Compose
+## 60-second local evaluation
 
 Requirements: Docker Engine or Docker Desktop with Compose.
 
@@ -44,6 +72,16 @@ docker compose up --build -d
 docker compose ps
 curl http://localhost:8080/healthz
 curl http://localhost:8080/api/v1/status
+```
+
+PowerShell uses the same Docker commands and `curl.exe`:
+
+```powershell
+docker compose config --quiet
+docker compose up --build -d
+docker compose ps
+curl.exe http://localhost:8080/healthz
+curl.exe http://localhost:8080/api/v1/status
 ```
 
 The service listens on `http://localhost:8080` and stores its cache in the
@@ -66,7 +104,21 @@ docker compose up --build -d
 ```
 
 See the [operations guide](docs/operations.md) before exposing n0ding outside
-the local machine.
+the local machine. For repeated private-alpha self-use, work through the
+[private self-use checklist](docs/private-self-use.md).
+
+After startup, point one or more standard clients at n0ding:
+
+```sh
+npm config set registry http://localhost:8080/npm/
+python -m pip config set global.index-url http://localhost:8080/pypi/simple/
+docker pull localhost:8080/library/alpine:3.20
+```
+
+The Docker command requires the local insecure-registry exception described
+below. npm and pip/uv work immediately over loopback HTTP. On repeated requests,
+responses expose `X-N0ding-Cache: HIT`, and `/api/v1/status` reports cache hits,
+misses, stored objects, bytes, errors, and client cancellations.
 
 ## npm client setup
 
@@ -127,6 +179,22 @@ deployments, use a trusted TLS reverse proxy instead of an insecure-registry
 exception. Detailed Caddy, nginx, and private-CA guidance is in
 [docs/operations.md](docs/operations.md).
 
+## PyPI / pip and uv client setup
+
+Point pip or uv at the Simple API endpoint:
+
+```sh
+python -m pip install --index-url http://localhost:8080/pypi/simple/ requests
+uv pip install --index-url http://localhost:8080/pypi/simple/ requests
+```
+
+The adapter rewrites Simple API HTML and JSON distribution links through
+`/pypi/files/` only when the file origin is explicitly allowed by config.
+Public PyPI needs `https://files.pythonhosted.org` in
+`allowed_file_origins`, which is included in the example Compose config. When
+a Simple API link includes a SHA-256 fragment, n0ding verifies it before
+committing the distribution file to cache.
+
 ## Configuration
 
 The container uses [`config/n0ding.toml`](config/n0ding.toml). A commented,
@@ -152,6 +220,7 @@ credentials into a committed config.
 | `GET /api/v1/status` | Version and repository/cache counters |
 | `GET /api/v1/repositories/npm/setup` | npm setup snippet |
 | `GET /api/v1/repositories/oci/setup` | Docker pull snippet |
+| `GET /api/v1/repositories/pypi/setup` | pip and uv setup snippet |
 | `GET /metrics` | Prometheus-compatible counters |
 
 ## Known limitations
@@ -162,7 +231,8 @@ credentials into a committed config.
   existing upstream credential handling is present.
 - Real private-upstream workflows and credential revocation are not yet
   validated.
-- PyPI is a design gate, not an implemented adapter.
+- PyPI support is read-only and caches only allowed file origins; publishing is
+  not implemented.
 - Podman has not yet been tested.
 - Range requests are proxied, but partial responses are not cached.
 - Retention is based on maximum object age, not LRU or a strict byte quota;
@@ -177,7 +247,8 @@ disk-full failure mode and operator guardrails.
 
 ## Development
 
-n0ding uses the Go standard library only.
+n0ding uses the Go standard library plus `golang.org/x/net/html` for PyPI
+Simple API HTML rewriting.
 
 ```sh
 go test ./...
@@ -186,11 +257,22 @@ go build -trimpath -o dist/n0ding ./cmd/n0ding
 go run ./cmd/n0ding -config config/n0ding.local.toml
 ```
 
+If Go is not installed locally, use the disposable Docker toolchain targets:
+
+```sh
+make docker-test
+make docker-check
+make docker-shell
+```
+
+These targets use `golang:1.25`, mount the checkout at `/src`, and keep Go
+build/module/temp caches under `.tmp/`, which is ignored by Git.
+
 The [architecture](docs/architecture.md), [baseline
 scorecard](docs/spike-scorecard.md), [threat model](docs/threat-model.md), and
 [v0.1-private roadmap](docs/release-checklist.md) describe the current
-boundaries and evidence. The [PyPI design gate](docs/pypi-design.md) records
-decisions that must be made before implementation.
+boundaries and evidence. The [PyPI design](docs/pypi-design.md) records the
+adapter decisions and remaining real-client evidence.
 
 ## Security and license
 

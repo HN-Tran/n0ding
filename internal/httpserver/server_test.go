@@ -41,8 +41,18 @@ func TestStatusAndSetupEndpoints(t *testing.T) {
 	statusRequest := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
 	statusResponse := httptest.NewRecorder()
 	handler.ServeHTTP(statusResponse, statusRequest)
-	if statusResponse.Code != http.StatusOK || !strings.Contains(statusResponse.Body.String(), `"version": "test"`) {
+	if statusResponse.Code != http.StatusOK ||
+		!strings.Contains(statusResponse.Body.String(), `"version": "test"`) ||
+		!strings.Contains(statusResponse.Body.String(), `"client_canceled": 0`) {
 		t.Fatalf("status: code=%d body=%s", statusResponse.Code, statusResponse.Body.String())
+	}
+
+	metricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	metricsResponse := httptest.NewRecorder()
+	handler.ServeHTTP(metricsResponse, metricsRequest)
+	if metricsResponse.Code != http.StatusOK ||
+		!strings.Contains(metricsResponse.Body.String(), `n0ding_repository_client_canceled_total{repository="npm",type="npm"} 0`) {
+		t.Fatalf("metrics: code=%d body=%s", metricsResponse.Code, metricsResponse.Body.String())
 	}
 
 	setupRequest := httptest.NewRequest(http.MethodGet, "/api/v1/repositories/npm/setup", nil)
@@ -86,6 +96,48 @@ func TestOCIRepositoryWiring(t *testing.T) {
 	setupResponse := httptest.NewRecorder()
 	handler.ServeHTTP(setupResponse, setupRequest)
 	if got := setupResponse.Body.String(); got != "docker pull registry.test:8080/library/alpine:3.20\n" {
+		t.Fatalf("setup snippet = %q", got)
+	}
+}
+
+func TestPyPIRepositoryWiring(t *testing.T) {
+	var upstreamURL string
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/simple/tiny/" {
+			t.Errorf("path = %s", request.URL.Path)
+		}
+		writer.Header().Set("Content-Type", "application/vnd.pypi.simple.v1+html")
+		_, _ = writer.Write([]byte(`<a href="` + upstreamURL + `/packages/tiny-1.0.0.tar.gz">tiny</a>`))
+	}))
+	defer upstream.Close()
+	upstreamURL = upstream.URL
+
+	handler, err := New(config.Config{
+		Server:  config.Server{PublicBaseURL: "http://packages.test"},
+		Storage: config.Storage{Path: filepath.Join(t.TempDir(), "data")},
+		Repositories: []config.Repository{{
+			Name:     "pypi",
+			Type:     "pypi",
+			Path:     "/pypi/simple/",
+			Upstream: upstream.URL + "/simple",
+			TTL:      time.Hour,
+		}},
+	}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/pypi/simple/tiny/", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "http://packages.test/pypi/files/tiny-1.0.0.tar.gz?") {
+		t.Fatalf("PyPI response: status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	setupRequest := httptest.NewRequest(http.MethodGet, "/api/v1/repositories/pypi/setup", nil)
+	setupResponse := httptest.NewRecorder()
+	handler.ServeHTTP(setupResponse, setupRequest)
+	if got := setupResponse.Body.String(); !strings.Contains(got, "python -m pip install --index-url http://packages.test/pypi/simple/ PACKAGE") {
 		t.Fatalf("setup snippet = %q", got)
 	}
 }

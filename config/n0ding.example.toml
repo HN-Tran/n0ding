@@ -28,3 +28,13 @@ type = "oci"
 path = "/v2/"
 upstream = "https://registry-1.docker.io"
 ttl = "1h"
+
+[repository.pypi]
+type = "pypi"
+path = "/pypi/simple/"
+upstream = "https://pypi.org/simple"
+ttl = "24h"
+# Distribution file URLs are rewritten and cached only for these explicit
+# origins plus the configured upstream origin.
+allowed_file_origins = "https://files.pythonhosted.org"
+forward_authorization = false

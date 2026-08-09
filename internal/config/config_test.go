@@ -110,6 +110,40 @@ ttl = "1h"
 	}
 }
 
+func TestParsePyPIRepository(t *testing.T) {
+	cfg, err := Parse(strings.NewReader(`
+[repository.pypi]
+type = "pypi"
+path = "/pypi/simple/"
+upstream = "https://pypi.org/simple"
+ttl = "6h"
+allowed_file_origins = "https://files.pythonhosted.org, https://packages.example.test"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Repositories) != 1 || cfg.Repositories[0].Type != "pypi" {
+		t.Fatalf("repositories = %#v", cfg.Repositories)
+	}
+	if got := cfg.Repositories[0].AllowedFileOrigins; len(got) != 2 ||
+		got[0] != "https://files.pythonhosted.org" ||
+		got[1] != "https://packages.example.test" {
+		t.Fatalf("allowed origins = %#v", got)
+	}
+}
+
+func TestParseRejectsPyPIPathWithoutSimpleSuffix(t *testing.T) {
+	_, err := Parse(strings.NewReader(`
+[repository.pypi]
+type = "pypi"
+path = "/pypi/"
+upstream = "https://pypi.org/simple"
+`))
+	if err == nil || !strings.Contains(err.Error(), "PyPI path must end with /simple/") {
+		t.Fatalf("expected PyPI path error, got %v", err)
+	}
+}
+
 func TestParseRejectsOCIPathPrefix(t *testing.T) {
 	_, err := Parse(strings.NewReader(`
 [repository.oci]

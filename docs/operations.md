@@ -1,12 +1,15 @@
 # Operations guide
 
 The `v0.1-private` read-only hardening baseline is one process, one
-configuration file, and one local filesystem cache. Run exactly one n0ding
-process against a cache directory; shared-volume multi-writer operation is
-unsupported.
+configuration file, and one local filesystem cache for npm, OCI, and PyPI
+package loading. Run exactly one n0ding process against a cache directory;
+shared-volume multi-writer operation is unsupported.
 
 For failure symptoms and diagnostic commands, see
 [the troubleshooting guide](troubleshooting.md).
+
+For a concise private-alpha operator gate before repeated self-use, see the
+[private self-use checklist](private-self-use.md).
 
 ## Docker Compose quickstart
 
@@ -103,7 +106,8 @@ The repository includes a deterministic, same-version recovery drill:
 It stops n0ding, archives cache plus config, restores into a new empty volume,
 revalidates npm lockfile integrity and OCI digests, exercises rollback and a
 corrupt-object refetch, and scans the archive and restored evidence for fake
-credential canaries. See the
+credential canaries. PyPI restore validation should be added to the private
+operator evidence once pip/uv real-client evidence is available. See the
 [stopped Compose backup/restore drill](backup-restore-drill.md) for its exact
 scope and measured result.
 
@@ -148,6 +152,8 @@ volume until recovery is accepted. Then point a stopped test deployment at
 
 - `/healthz`, `/api/v1/status`, and `/metrics`;
 - `npm ci` from a committed lockfile with an empty npm client cache;
+- one `pip install` or `uv pip install` from an empty client cache when PyPI is
+  enabled;
 - one OCI request or pull and its recorded digest;
 - authorized and denied requests when private upstream handling is enabled;
 - logs and restored state with disposable credential canaries.

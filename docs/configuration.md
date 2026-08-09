@@ -37,6 +37,14 @@ type = "oci"
 path = "/v2/"
 upstream = "https://registry-1.docker.io"
 ttl = "1h"
+
+[repository.pypi]
+type = "pypi"
+path = "/pypi/simple/"
+upstream = "https://pypi.org/simple"
+ttl = "24h"
+allowed_file_origins = "https://files.pythonhosted.org"
+forward_authorization = false
 ```
 
 Validate a file without starting the listener:
@@ -50,7 +58,7 @@ n0ding -config /etc/n0ding/n0ding.toml -check-config
 | Key | Default | Meaning |
 |---|---|---|
 | `listen` | `:8080` | HTTP listen address inside the process |
-| `public_base_url` | `http://localhost:8080` | Client-visible base URL used in npm tarball rewrites and setup snippets |
+| `public_base_url` | `http://localhost:8080` | Client-visible base URL used in npm/PyPI rewrites and setup snippets |
 | `log_level` | `info` | `debug`, `info`, `warn`, or `error` |
 
 `public_base_url` must be the URL used by clients. Behind a TLS reverse proxy it
@@ -98,28 +106,39 @@ The table name determines the repository name, such as `npm` in
 
 | Key | Default | Meaning |
 |---|---|---|
-| `type` | table name | Supported values are `npm` and `oci` |
-| `path` | `/<name>/` | Client-facing path; OCI must be exactly `/v2/` |
+| `type` | table name | Supported values are `npm`, `oci`, and `pypi` |
+| `path` | `/<name>/` | Client-facing path; OCI must be exactly `/v2/`, and PyPI must end in `/simple/` |
 | `upstream` | none | Absolute HTTP(S) upstream URL |
 | `ttl` | `24h` | Freshness duration for cached responses |
-| `forward_authorization` | `false` | npm-only opt-in for upstream credentials |
+| `forward_authorization` | `false` | npm/PyPI opt-in for upstream credentials |
+| `allowed_file_origins` | empty | PyPI-only comma-separated HTTP(S) origins whose distribution files may be proxied and cached |
 
-When npm `forward_authorization` is enabled, authenticated requests bypass the
-shared npm cache. OCI has separate Registry V2 Bearer handling: tokens are
-forwarded but never persisted, and cache hits require an authorized upstream
-`HEAD`.
+When npm or PyPI `forward_authorization` is enabled, authenticated requests
+bypass the shared persistent cache. OCI has separate Registry V2 Bearer
+handling: tokens are forwarded but never persisted, and cache hits require an
+authorized upstream `HEAD`.
 
 Only one OCI repository can exist because the standard Registry V2 client path
 is fixed at `/v2/`.
 
+PyPI implements the read-only Simple Repository API for project pages and
+distribution files. HTML and JSON project pages are rewritten so allowed
+distribution origins point through the repository's `/files/` sibling path. A
+configured `[repository.pypi]` path of `/pypi/simple/` therefore uses
+`/pypi/files/` for cached distributions. File origins are intentionally
+allowlisted to avoid turning the adapter into an open fetch proxy. When a link
+contains a `#sha256=...` fragment, the file body must match before n0ding
+commits it to cache.
+
 ## Credential and cache-safety behavior
 
-- `forward_authorization = false` is the npm default.
+- `forward_authorization = false` is the npm and PyPI default.
 - Enabling it accepts the client's `Authorization` header as the only supported
-  npm credential header; authenticated npm responses bypass persistent caching.
+  npm/PyPI credential header; authenticated npm/PyPI responses bypass
+  persistent caching.
 - OCI forwards `Authorization` because Registry V2 pulls require it. Cookies,
   proxy credentials, npm OTP fields, forwarded identity headers, and Docker
-  registry-auth transport headers are stripped for both adapters.
+  registry-auth transport headers are stripped for all adapters.
 - On redirects, `Authorization` is retained only for the exact same scheme,
   host, and effective port. Cross-origin registry/CDN redirects remain allowed
   but receive no client credentials; redirect URL userinfo is discarded.
@@ -136,9 +155,9 @@ is fixed at `/v2/`.
   the file until the private-upstream secret-input design is complete.
 
 Cookie, OTP, proxy, and arbitrary custom-header authentication are unsupported.
-Client `Authorization` forwarding is the only fixture-tested private npm input;
-OCI fixture coverage currently uses Bearer tokens. Basic-auth and real private
-upstreams remain unverified. Follow the
+Client `Authorization` forwarding is the only fixture-tested private npm/PyPI
+input; OCI fixture coverage currently uses Bearer tokens. Basic-auth and real
+private upstreams remain unverified. Follow the
 [disposable private-upstream drill](private-upstream-drill.md) rather than
 putting credentials into an upstream URL.
 See the [threat model](threat-model.md) and

@@ -25,6 +25,18 @@ n0ding OCI adapter
    |-- cache hit --> verified manifest/blob on local storage
    |
    `-- cache miss --> OCI registry --> verify SHA-256 --> atomic cache commit
+
+pip / uv client
+   |
+   | PyPI Simple API requests
+   v
+n0ding /pypi/simple/
+   |-- cache hit --> rewritten Simple page or distribution file
+   |
+   `-- cache miss --> configured Simple upstream
+                         |
+                         `--> rewrite allowed file links through /pypi/files/
+                              and verify SHA-256 fragments before cache commit
 ```
 
 n0ding uses standard npm client behavior. No client plugin is required. Package
@@ -36,6 +48,11 @@ Specification. Registry authentication challenges are passed through unchanged,
 client Bearer credentials are forwarded upstream, and only successful manifest
 and blob `GET` responses are cached. Push methods remain disabled.
 
+The PyPI adapter implements the read-only Simple Repository API. It rewrites
+HTML and JSON project pages, proxies distribution files only from configured
+allowed origins, and verifies SHA-256 fragments before cache commit when the
+Simple page supplies them. Publishing methods remain disabled.
+
 ## Components
 
 - `cmd/n0ding`: configuration loading, lifecycle, and graceful shutdown.
@@ -46,20 +63,25 @@ and blob `GET` responses are cached. Push methods remain disabled.
   coalescing, and counters.
 - `internal/ociproxy`: OCI pull proxy, auth-challenge forwarding, manifest/blob
   classification, and SHA-256 verification.
+- `internal/pypiproxy`: PyPI Simple API proxy, HTML/JSON rewriting, distribution
+  file allowlisting, SHA-256 verification, and counters.
 - `internal/cache`: filesystem persistence with hashed keys and atomic writes.
 - `internal/httppolicy`: shared credential-forwarding, cache-admission, header
   persistence, and public-upstream-display rules.
 - `internal/httpserver`: routing, status API, metrics, startup maintenance, and
   periodic GC scheduling.
 
-The `v0.1-private` baseline intentionally uses no third-party Go packages.
+The baseline is almost entirely standard-library Go. PyPI HTML rewriting uses
+the narrowly scoped `golang.org/x/net/html` parser rather than ad hoc string
+replacement.
 
 ## Cache model
 
 Each cache key contains the repository, absolute upstream URL, query string, and
 the client's `Accept` header. The `Accept` variation matters because npm can ask
-for abbreviated or full package metadata and OCI registries use content
-negotiation for image indexes and manifests.
+for abbreviated or full package metadata, OCI registries use content
+negotiation for image indexes and manifests, and PyPI project pages can be HTML
+or JSON.
 
 Bodies and JSON response metadata are kept separately:
 
@@ -73,6 +95,10 @@ data/
     cd/
       cd...91.body
       cd...91.json
+  pypi/
+    ef/
+      ef...17.body
+      ef...17.json
 ```
 
 Writes go to temporary files in the target shard and are renamed only after the
@@ -86,6 +112,11 @@ SHA-256 digest is calculated. The temporary file is committed only if the
 calculated digest matches the digest in the request or
 `Docker-Content-Digest`. Docker clients independently verify the received
 content as part of a pull.
+
+PyPI Simple pages are buffered up to 64 MiB for structured rewriting. PyPI
+distribution files stream to the client and cache together. When the rewritten
+link carries a SHA-256 fragment, the temporary file is committed only if the
+calculated digest matches that fragment.
 
 Repository TTL remains lazy: an expired object becomes a miss and is replaced
 when requested. Physical retention is separate:
@@ -159,10 +190,11 @@ unified auth layer exists.
 - one process; no distributed locking
 - no private publish path
 - age-based retention only; no byte quota or LRU
-- metadata rewrite limit of 64 MiB
+- npm/PyPI metadata rewrite limit of 64 MiB
 - OCI manifest limit of 16 MiB
-- SHA-256 OCI digests only
+- SHA-256 OCI digests and PyPI fragments only
 - no OCI push, catalog, deletion, referrers, or signature policy
+- no PyPI publish, search, project-list mirroring, or administration API
 
 These are MVP boundaries.
 
@@ -171,9 +203,10 @@ These are MVP boundaries.
 The short retention/concurrency smoke, stopped recovery drill, and retention
 policy decision are complete. The next retention gate is one uninterrupted
 seven-day run followed by deployment-specific disk-capacity evidence and
-explicit acceptance of the missing byte quota. Real private-provider,
-real-client/TLS, and PyPI work remain ordered separately in the
+explicit acceptance of the missing byte quota. Real private-provider and
+real-client/TLS work remain ordered separately in the
 [v0.1-private roadmap](release-checklist.md).
 
-PyPI has a separate [design gate](pypi-design.md). Private publishing remains
-outside the read-only architecture.
+PyPI has a separate [design note](pypi-design.md) for implemented adapter
+decisions and remaining pip/uv evidence. Private publishing remains outside
+the read-only architecture.

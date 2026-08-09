@@ -25,7 +25,8 @@ It is still not a production supply-chain security platform.
 - [x] OCI SHA-256 verification before cache commit.
 - [x] Persistent local filesystem cache with atomic writes.
 - [x] Startup stale-temp cleanup, age-based GC, and same-key coalescing.
-- [x] One binary, one config, no database, no third-party Go dependencies.
+- [x] One binary, one config, no database. PyPI adds the narrowly scoped
+  `golang.org/x/net/html` dependency for HTML rewriting.
 
 Evidence remains in [compatibility.md](compatibility.md) and
 [spike-scorecard.md](spike-scorecard.md).
@@ -118,6 +119,20 @@ false until one uninterrupted 168-hour run finishes. The conditional retention
 decision, disk-full failure mode, operator guardrails, and future strict-limit
 requirements are in [retention-policy.md](retention-policy.md).
 
+## Private self-use readiness slice
+
+The focused self-use checklist in [private-self-use.md](private-self-use.md)
+is the current operator gate for a disposable private-alpha deployment. It
+requires a dedicated cache volume, free-space alerts, capacity planning from
+observed ingress, backup/restore validation, canary-scan references,
+status/metrics checks, safe shutdown/restart commands, rollback steps, and
+explicit unsupported-use warnings.
+
+Passing that checklist does not close the full `v0.1-private` trust gate. It
+does not prove real private-provider credentials, trusted TLS client matrices,
+real pip/uv compatibility, strict byte-quota behavior, or the uninterrupted
+seven-day soak.
+
 ## 4. Real-client and TLS compatibility
 
 - [ ] Repeat the npm matrix on a supported current npm client.
@@ -132,15 +147,16 @@ requirements are in [retention-policy.md](retention-policy.md).
 
 - [x] Record the protocol, URL-rewrite, integrity, auth, and dependency
   decisions in [pypi-design.md](pypi-design.md).
-- [ ] Resolve every blocking design decision in that document.
-- [ ] Add a PyPI adapter without weakening the shared HTTP/cache policy.
-- [ ] Support both required Simple API representation paths selected by the
+- [x] Resolve every blocking design decision in that document.
+- [x] Add a PyPI adapter without weakening the shared HTTP/cache policy.
+- [x] Support both required Simple API representation paths selected by the
   design.
-- [ ] Verify distribution hashes before cache commit where the index supplies
+- [x] Verify distribution hashes before cache commit where the index supplies
   them.
 - [ ] Test normalized names, trailing-slash redirects, wheels, source
-  distributions, yanked files, `Requires-Python`, and metadata sidecars.
-- [ ] Run two clean-client installs with pip and uv, including restart and
+  distributions, yanked files, `Requires-Python`, and metadata sidecars with
+  real pip/uv clients.
+- [x] Run two clean-client installs with pip and uv, including restart and
   offline-client-cache isolation.
 - [ ] Test a private PyPI-compatible upstream only after the private-auth model
   is approved.
