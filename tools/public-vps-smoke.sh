@@ -46,7 +46,9 @@ EOF
 docker network create "$network" >/dev/null
 docker run -d --name "$n0ding" --network "$network" --network-alias n0ding -e N0DING_PUBLIC_URL=https://n0ding.test -v "$root/deploy/public/n0ding.toml:/etc/n0ding/n0ding.toml:ro" n0ding:public-vps-ci >/dev/null
 docker run -d --name "$caddy" --network "$network" -p 443:443 -v "$work/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$work/ca.pem:/etc/caddy/client-ca.pem:ro" caddy:2.10.0-alpine >/dev/null
-echo '127.0.0.1 n0ding.test' | sudo tee -a /etc/hosts >/dev/null
+caddy_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$caddy")
+test -n "$caddy_ip"
+echo "$caddy_ip n0ding.test" | sudo tee -a /etc/hosts >/dev/null
 for _ in $(seq 1 30); do docker exec "$caddy" test -f /data/caddy/pki/authorities/local/root.crt && break; sleep 1; done
 docker cp "$caddy:/data/caddy/pki/authorities/local/root.crt" "$work/server-ca.crt"
 if curl -fsS --cacert "$work/server-ca.crt" https://n0ding.test/healthz >/dev/null 2>&1; then echo 'unauthenticated request succeeded' >&2; exit 1; fi
