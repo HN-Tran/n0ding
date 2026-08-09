@@ -1,4 +1,4 @@
-# n0ding — lightweight artifact caching for npm, PyPI, and OCI
+# n0ding: lightweight artifact caching for npm, PyPI, and OCI
 
 [![CI](https://github.com/HN-Tran/n0ding/actions/workflows/ci.yml/badge.svg)](https://github.com/HN-Tran/n0ding/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -60,9 +60,40 @@ npm / pip / uv / Docker
 - Not a replacement for a production-grade artifact manager.
 - Not a Maven, NuGet, Helm, or general artifact cache.
 
-## 60-second local evaluation
+## Install in one minute
 
-Requirements: Docker Engine or Docker Desktop with Compose.
+Requirements: Docker Engine or Docker Desktop with Compose v2.
+
+Linux and macOS:
+
+```sh
+curl -fsSLO https://github.com/HN-Tran/n0ding/releases/latest/download/install.sh
+sh install.sh
+```
+
+Windows PowerShell:
+
+```powershell
+Invoke-WebRequest https://github.com/HN-Tran/n0ding/releases/latest/download/install.ps1 -OutFile install.ps1
+& .\install.ps1
+```
+
+The installer downloads checksum-verified deployment files, pulls the pinned
+multi-architecture image from GHCR, binds n0ding to `127.0.0.1:8080`, and
+waits for the health check. It does not change npm, pip, uv, or Docker client
+settings.
+
+Verify the service:
+
+```sh
+curl http://localhost:8080/healthz
+curl http://localhost:8080/api/v1/status
+```
+
+See the [deployment guide](docs/deployment.md) for version pinning, shared
+deployment behind TLS, upgrades, logs, backups, and uninstalling.
+
+## Build from source
 
 From the repository checkout:
 
@@ -120,7 +151,12 @@ below. npm and pip/uv work immediately over loopback HTTP. On repeated requests,
 responses expose `X-N0ding-Cache: HIT`, and `/api/v1/status` reports cache hits,
 misses, stored objects, bytes, errors, and client cancellations.
 
-## npm client setup
+<a id="client-setup"></a>
+## Client setup
+
+Choose only the clients you want to route through n0ding.
+
+### npm
 
 For a project-local setup, create `.npmrc` next to `package.json`:
 
@@ -155,7 +191,7 @@ n0ding rewrites npm tarball URLs to its configured `public_base_url`, so that
 value must be client-reachable. Responses expose `X-N0ding-Cache: MISS` or
 `HIT`.
 
-## OCI / Docker client setup
+### OCI / Docker
 
 Docker expects registries to use trusted TLS. For local evaluation only, add
 `localhost:8080` to the Docker daemon's `insecure-registries` list and restart
@@ -179,7 +215,7 @@ deployments, use a trusted TLS reverse proxy instead of an insecure-registry
 exception. Detailed Caddy, nginx, and private-CA guidance is in
 [docs/operations.md](docs/operations.md).
 
-## PyPI / pip and uv client setup
+### PyPI / pip and uv
 
 Point pip or uv at the Simple API endpoint:
 

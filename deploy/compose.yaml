@@ -1,0 +1,21 @@
+name: n0ding
+
+services:
+  n0ding:
+    image: ${N0DING_IMAGE:-ghcr.io/hn-tran/n0ding:latest}
+    environment:
+      N0DING_PUBLIC_URL: ${N0DING_PUBLIC_URL:-http://localhost:8080}
+    ports:
+      - "${N0DING_BIND_ADDRESS:-127.0.0.1}:${N0DING_PORT:-8080}:8080"
+    volumes:
+      - n0ding-data:/data
+      - ./n0ding.toml:/etc/n0ding/n0ding.toml:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  n0ding-data:
