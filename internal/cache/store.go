@@ -23,6 +23,8 @@ type Store struct {
 	mu   sync.RWMutex
 }
 
+const maxMetadataBytes = 1 << 20
+
 type Metadata struct {
 	Status        int         `json:"status"`
 	Header        http.Header `json:"header"`
@@ -67,7 +69,7 @@ func (s *Store) Lookup(key string, ttl time.Duration) (Entry, bool, error) {
 	defer s.mu.RUnlock()
 
 	bodyPath, metadataPath := s.paths(key)
-	data, err := os.ReadFile(metadataPath)
+	metadata, err := readMetadata(metadataPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return Entry{}, false, nil
 	}
@@ -75,10 +77,6 @@ func (s *Store) Lookup(key string, ttl time.Duration) (Entry, bool, error) {
 		return Entry{}, false, fmt.Errorf("read cache metadata: %w", err)
 	}
 
-	var metadata Metadata
-	if err := json.Unmarshal(data, &metadata); err != nil {
-		return Entry{}, false, fmt.Errorf("decode cache metadata: %w", err)
-	}
 	if s.now().Sub(metadata.StoredAt) >= ttl {
 		return Entry{}, false, nil
 	}
@@ -322,13 +320,21 @@ func (s *Store) paths(key string) (body string, metadata string) {
 }
 
 func readMetadata(path string) (Metadata, error) {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return Metadata{}, err
 	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxMetadataBytes+1))
+	if err != nil {
+		return Metadata{}, err
+	}
+	if len(data) > maxMetadataBytes {
+		return Metadata{}, fmt.Errorf("cache metadata exceeds %d bytes", maxMetadataBytes)
+	}
 	var metadata Metadata
 	if err := json.Unmarshal(data, &metadata); err != nil {
-		return Metadata{}, err
+		return Metadata{}, fmt.Errorf("decode cache metadata: %w", err)
 	}
 	return metadata, nil
 }

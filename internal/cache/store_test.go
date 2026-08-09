@@ -55,6 +55,26 @@ func TestPutAndLookup(t *testing.T) {
 	}
 }
 
+func TestLookupRejectsOversizedMetadata(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyPath, metadataPath := store.paths("oversized")
+	if err := os.MkdirAll(filepath.Dir(bodyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bodyPath, []byte("body"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metadataPath, bytes.Repeat([]byte("x"), maxMetadataBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.Lookup("oversized", time.Hour); err == nil || found {
+		t.Fatalf("expected oversized metadata error, found=%v err=%v", found, err)
+	}
+}
+
 func TestPutStripsSensitiveMetadataHeaders(t *testing.T) {
 	store, err := New(t.TempDir())
 	if err != nil {
