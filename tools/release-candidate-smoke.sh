@@ -13,6 +13,7 @@ cleanup() {
   docker rm -f "$dind" "$server" >/dev/null 2>&1 || true
   docker volume rm "$volume" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
+  docker run --rm -v "$work:/work" alpine:3.22 rm -rf /work/. >/dev/null 2>&1 || true
   rm -rf "$work"
 }
 trap cleanup EXIT INT TERM
@@ -53,6 +54,7 @@ run_npm() {
 run_pip() {
   docker run --rm --network "$network" python:3.13-alpine \
     python -m pip install --disable-pip-version-check --no-cache-dir \
+      --trusted-host n0ding \
       --index-url http://n0ding:8080/pypi/simple/ \
       requests==2.32.5
 }
@@ -60,6 +62,7 @@ run_pip() {
 run_uv() {
   docker run --rm --network "$network" ghcr.io/astral-sh/uv:python3.13-alpine \
     uv pip install --system --no-cache \
+      --allow-insecure-host n0ding \
       --index-url http://n0ding:8080/pypi/simple/ \
       idna==3.10
 }
