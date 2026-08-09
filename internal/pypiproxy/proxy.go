@@ -13,6 +13,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -533,7 +534,15 @@ func (p *Proxy) proxyFileURL(target *url.URL, fragment string) string {
 	if sha != "" {
 		values.Set("sha256", sha)
 	}
-	proxy := p.proxyFileBaseURL + "/?" + values.Encode()
+	// Package clients derive candidate versions and wheel compatibility from
+	// the URL path, even when the Simple JSON response also carries a filename
+	// field. Keep the upstream basename visible instead of exposing every file
+	// as the indistinguishable `/files/` endpoint.
+	filename := path.Base(target.Path)
+	if filename == "." || filename == "/" || filename == "" {
+		filename = "artifact"
+	}
+	proxy := p.proxyFileBaseURL + "/" + url.PathEscape(filename) + "?" + values.Encode()
 	if fragment != "" {
 		proxy += "#" + fragment
 	}

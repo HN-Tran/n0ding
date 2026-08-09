@@ -71,7 +71,7 @@ func TestProxyRewritesAndCachesSimpleHTMLAndHashedFile(t *testing.T) {
 			!strings.Contains(body, `data-yanked="bad release"`) {
 			t.Fatalf("attempt %d: metadata attributes were not preserved: %s", attempt+1, body)
 		}
-		if !strings.Contains(body, "http://packages.test/pypi/files/?") ||
+		if !strings.Contains(body, "http://packages.test/pypi/files/tiny-1.0.0-py3-none-any.whl?") ||
 			!strings.Contains(body, "#sha256="+sha) {
 			t.Fatalf("attempt %d: file URL was not rewritten with hash: %s", attempt+1, body)
 		}
@@ -141,7 +141,7 @@ func TestProxyRewritesSimpleJSON(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d", response.Code)
 	}
-	if !strings.Contains(response.Body.String(), "http://packages.test/pypi/files/?") {
+	if !strings.Contains(response.Body.String(), "http://packages.test/pypi/files/tiny.tar.gz?") {
 		t.Fatalf("JSON URL was not rewritten: %s", response.Body.String())
 	}
 }

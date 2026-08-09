@@ -120,7 +120,7 @@ func TestPyPIRepositoryWiring(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/pypi/simple/tiny/", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "http://packages.test/pypi/files/?") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "http://packages.test/pypi/files/tiny-1.0.0.tar.gz?") {
 		t.Fatalf("PyPI response: status=%d body=%s", response.Code, response.Body.String())
 	}
 
