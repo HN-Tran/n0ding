@@ -2,7 +2,17 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; work="$(mktemp -d)"; suffix="${RANDOM}${RANDOM}"
 network="n0ding-public-$suffix"; n0ding="n0ding-public-$suffix"; caddy="n0ding-caddy-$suffix"
-cleanup(){ docker rm -f "$caddy" "$n0ding" >/dev/null 2>&1 || true; docker network rm "$network" >/dev/null 2>&1 || true; rm -rf "$work"; }
+cleanup(){
+  result=$?
+  if [ "$result" -ne 0 ]; then
+    docker logs "$caddy" 2>&1 || true
+    docker logs "$n0ding" 2>&1 || true
+  fi
+  docker rm -f "$caddy" "$n0ding" >/dev/null 2>&1 || true
+  docker network rm "$network" >/dev/null 2>&1 || true
+  rm -rf "$work"
+  return "$result"
+}
 trap cleanup EXIT
 openssl genpkey -algorithm ED25519 -out "$work/ca.key"
 openssl req -x509 -new -key "$work/ca.key" -days 1 -subj '/CN=n0ding CI CA' -out "$work/ca.pem"
@@ -11,11 +21,16 @@ openssl req -new -key "$work/client.key" -subj '/CN=n0ding CI client' -out "$wor
 openssl x509 -req -in "$work/client.csr" -CA "$work/ca.pem" -CAkey "$work/ca.key" -CAcreateserial -days 1 -out "$work/client.crt"
 cat "$work/client.crt" "$work/client.key" > "$work/client.pem"
 cat >"$work/Caddyfile" <<'EOF'
-{ admin off }
+{
+  admin off
+}
 n0ding.test {
   tls internal {
-    client_auth { mode require_and_verify
-      trust_pool file { pem_file /etc/caddy/client-ca.pem }
+    client_auth {
+      mode require_and_verify
+      trust_pool file {
+        pem_file /etc/caddy/client-ca.pem
+      }
     }
   }
   reverse_proxy n0ding:8080
