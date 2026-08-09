@@ -1,9 +1,10 @@
 # PyPI read-only adapter design
 
-Status: initial read-only adapter implemented for private self-use.
+Status: read-only adapter implemented and validated with pip and uv.
 
-PyPI is planned for `v0.1-private`, but it must reuse the shared cache and
-credential-safety foundations instead of becoming a generic reverse proxy.
+The PyPI adapter is included in the `v0.1.0` public-preview boundary. It reuses
+the shared cache and credential-safety foundations instead of becoming a
+generic reverse proxy.
 
 ## Protocol scope
 
@@ -89,13 +90,17 @@ enabled and they bypass persistent caching.
 - n0ding restart followed by a second clean-client install.
 - One denied private-upstream identity after the auth model exists.
 
-## Remaining evidence gate
+## Current evidence and remaining hardening
 
-Before closing `v0.1-private`, fixtures and real-client evidence still need:
+Current pip and uv clients install a wheel from separate empty client caches,
+including the PEP 658/714 metadata sidecar path. The test repeats after a
+n0ding restart and verifies persistent server-cache hits and matching installed
+file hashes.
 
-1. current pip and uv install runs from empty client caches;
-2. normalized/mixed project names, wheels, sdists, yanked markers,
+Additional hardening beyond the narrow v0.1.0 preview should cover:
+
+1. normalized/mixed project names, sdists, yanked markers,
    `Requires-Python`, and metadata sidecars;
-3. restart followed by a second clean-client install;
-4. one private PyPI-compatible upstream after the broader private-provider
+2. requirements-file hash enforcement with multiple distributions;
+3. one private PyPI-compatible upstream after the broader private-provider
    evidence gate is approved.

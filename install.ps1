@@ -22,7 +22,12 @@ if ($Version -eq "latest") {
 }
 
 $ImageVersion = $Version.TrimStart([char]'v')
-$AssetBase = "https://github.com/$Repository/releases/download/$Version"
+$AssetBase = if ($env:N0DING_RELEASE_BASE_URL) {
+    $env:N0DING_RELEASE_BASE_URL
+} else {
+    "https://github.com/$Repository/releases/download/$Version"
+}
+$HealthUrl = if ($env:N0DING_HEALTH_URL) { $env:N0DING_HEALTH_URL } else { "http://localhost:8080/healthz" }
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
 function Save-ReleaseAsset([string]$Name) {
@@ -60,7 +65,7 @@ if ($LASTEXITCODE -ne 0) { throw "Could not start n0ding" }
 $Healthy = $false
 for ($Attempt = 0; $Attempt -lt 30; $Attempt++) {
     try {
-        Invoke-RestMethod "http://localhost:8080/healthz" | Out-Null
+        Invoke-RestMethod $HealthUrl | Out-Null
         $Healthy = $true
         break
     } catch {

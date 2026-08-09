@@ -10,6 +10,18 @@ All notable changes to n0ding are documented in this file. The project follows
 - Classified downstream client cancellations separately from repository
   failures in JSON status, Prometheus metrics, and logs for npm, OCI, and
   PyPI proxies.
+- Added a cross-ecosystem release-candidate smoke for npm lockfile installs,
+  pip, uv, and Docker pulls across a persistent n0ding restart.
+
+### Added
+
+- Added the read-only PyPI Simple API and distribution cache for pip and uv,
+  including HTML/JSON link rewriting, allowed file origins, hash verification,
+  and PEP 658/714 metadata sidecars.
+- Added checksum-verified installers for Linux, macOS, and Windows plus a
+  loopback-safe deployment Compose file.
+- Added a multi-architecture GHCR release workflow with SBOM, provenance, and
+  versioned GitHub Release assets.
 
 ### Security
 
@@ -38,9 +50,10 @@ All notable changes to n0ding are documented in this file. The project follows
 
 ### Documentation
 
-- Reframed v0.1 as a private hardening phase with no public launch.
-- Replaced the public release checklist with an ordered private-use roadmap.
-- Added a PyPI design gate instead of a partial implementation.
+- Defined the narrow v0.1.0 public-preview boundary and its release gate.
+- Retained stricter private-provider and long-duration work as a separate
+  hardening roadmap.
+- Documented PyPI support for pip and uv without claiming package publishing.
 - Added a disposable manual npm/OCI private-service drill, secret-free example
   config, and streaming credential-canary scanner without claiming an external
   provider run.
@@ -55,10 +68,10 @@ All notable changes to n0ding are documented in this file. The project follows
   capacity alerts, backup/restore, canary scans, status checks, safe restarts,
   rollback, cleanup, and remaining not-ready warnings.
 
-## [0.1.0] - Unreleased (private hardening baseline)
+## [0.1.0] - Unreleased (public preview)
 
-This section records the narrow npm + OCI baseline being hardened privately.
-No tag, public release, or published image exists.
+This section records the narrow public-registry, read-only preview baseline.
+No tag, public release, or published image exists yet.
 
 ### Added
 
@@ -79,8 +92,8 @@ No tag, public release, or published image exists.
 ### Known limitations
 
 - Not an offline mirror; OCI cache hits still contact the upstream.
-- No private publishing, client authentication, users, RBAC, or additional
-  package ecosystems.
+- No private publishing, client authentication, users, RBAC, or package
+  ecosystems beyond npm, PyPI, and OCI.
 - Podman is untested.
 - Range requests are proxied but partial responses are not cached.
 - Retention is age-based and does not enforce a strict disk quota.

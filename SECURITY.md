@@ -24,9 +24,9 @@ available, contact the repository owner through a private channel listed on
 their GitHub profile and ask for a secure reporting channel before sending
 details.
 
-There is no public v0.1 launch planned. Before any future public announcement,
-confirm that at least one monitored private reporting path above is available
-and replace this paragraph when a permanent security contact is established.
+Before publishing v0.1.0, confirm that GitHub's private **Report a
+vulnerability** flow is enabled and monitored. A dedicated security mailbox
+may replace it later.
 
 A useful report includes:
 
