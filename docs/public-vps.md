@@ -21,9 +21,10 @@ need for their own registry authentication flows.
 - The profile targets public upstream registries. Private upstream support is
   outside the v0.1 boundary.
 
-The current age-based retention policy is not a strict storage quota. Use a
-dedicated volume, alert at 20% free space, and treat 10% free space as
-critical. Do not expose the profile before those alerts exist.
+The bundled profile uses a 100 GiB shared cache budget, starts pressure GC at
+90%, collects least-recently-used entries down to 75%, and preserves at least
+10 GiB of filesystem headroom. Adjust these values in `n0ding.toml` for the
+VPS volume and keep independent disk alerts enabled.
 
 ## Create the client CA and certificate
 
@@ -64,7 +65,16 @@ From `deploy/public`:
 cp .env.example .env
 ```
 
-Set the real domain and a pinned n0ding image in `.env`. Copy only
+Set the real domain and a pinned n0ding image in `.env`. Generate the separate
+operator token with restrictive permissions:
+
+```sh
+openssl rand -hex 32 > operator-token
+chmod 600 operator-token
+```
+
+This token authorizes mutating maintenance actions. Normal package clients do
+not need it. Copy only
 `client-ca.pem` to this directory on the VPS. Do not copy `client-ca.key`,
 `client.key`, or `client.pem` to the server.
 
@@ -79,6 +89,21 @@ curl --cert client.crt --key client.key \
 
 An ordinary request without a trusted client certificate must fail during the
 TLS handshake.
+
+## Operator maintenance
+
+The dashboard and read-only operator API require mTLS like every public route.
+Manual garbage collection additionally requires the operator bearer token:
+
+```sh
+curl --cert client.crt --key client.key \
+  -H "Authorization: Bearer $(cat operator-token)" \
+  -X POST https://packages.example.com/api/v1/operator/gc
+```
+
+Keep the token out of shell history, logs, source control, and client package
+configuration. Rotate it by replacing `operator-token` and recreating only the
+n0ding container. Cache data and client certificates remain unchanged.
 
 ## Client authentication
 

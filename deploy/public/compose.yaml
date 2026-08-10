@@ -8,6 +8,7 @@ services:
     volumes:
       - n0ding-data:/data
       - ./n0ding.toml:/etc/n0ding/n0ding.toml:ro
+      - ./operator-token:/run/secrets/n0ding-operator-token:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]

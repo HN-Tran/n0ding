@@ -1,22 +1,30 @@
 # Retention policy decision
 
-Status: accepted for `v0.1-private` alpha use with operational conditions,
-2026-07-26. This is not a production capacity guarantee.
+Status: superseded by the shared-budget design for `v0.1`, 2026-08-10.
+This remains a record of why age-only retention was replaced.
 
 ## Decision
 
-`v0.1-private` keeps age-only retention. The default remains:
+`v0.1` combines age retention with an optional shared byte budget:
 
 ```toml
 [storage]
 max_age = "720h"
 gc_interval = "1h"
 stale_temp_age = "1h"
+max_bytes = 107374182400
+high_watermark = 0.90
+low_watermark = 0.75
+min_free_bytes = 10737418240
 ```
 
-There is no `max_bytes` setting and no claim that n0ding bounds total disk
-usage. Age-only retention is acceptable for this private alpha only when the
-operator:
+The budget is shared across npm, PyPI, and OCI. Known-size downloads reserve
+capacity before writing. Pressure collection removes globally
+least-recently-used complete objects down to the low watermark. Unknown-size
+or oversized objects continue to the client without entering the cache.
+
+This bounds accounted complete-object bytes, not every filesystem consumer.
+Operators must still:
 
 - treats the cache as disposable;
 - gives `/data` a dedicated filesystem or volume with known capacity;
@@ -24,12 +32,11 @@ operator:
   metric;
 - chooses `max_age` from the available capacity and worst credible ingress
   rate rather than accepting `720h` blindly;
-- stops n0ding before clearing or replacing a cache under disk pressure.
+- keep external disk alerts and a dedicated volume where practical.
 
-The roadmap keeps disk exhaustion as an open acceptance gate until the real
-seven-day soak has passed and the intended private deployment has a recorded
-capacity/alert drill. A strict internal byte quota remains a later hardening
-option, not a hidden requirement that this decision pretends is implemented.
+The real seven-day soak and a recorded capacity/alert drill remain release
+gates because metadata, temporary files, filesystem allocation overhead, and
+unrelated volume users are outside the logical object budget.
 
 ## Why age alone is not a size bound
 
@@ -90,9 +97,12 @@ recommendation. For example, a dedicated 20 GiB volume with only 15 GiB
 allocated to cache and a credible 3 GiB/day unique ingress rate should use no
 more than roughly five days before additional safety margin.
 
-## Why a strict byte limit is not a small patch
+## Why the shared byte limit was not a small patch
 
-The current store has a natural safe deletion primitive for complete
+The implementation required more than sorting complete pairs. It includes the
+following design constraints:
+
+The store has a natural safe deletion primitive for complete
 body/metadata pairs. Sorting those pairs by `stored_at` and deleting the oldest
 would be straightforward, but it would not create a strict disk limit.
 A correct implementation also needs:
@@ -118,8 +128,8 @@ A correct implementation also needs:
    current accounted bytes, eviction count/bytes, skipped active entries, and
    an explicit over-limit signal.
 
-Until those properties and concurrent failure tests exist, adding a periodic
-size-sort pass would be named a best-effort target, not `max_bytes`.
+The remaining seven-day evidence verifies these properties under sustained
+concurrency and restart pressure.
 
 ## Integrity rules for future eviction
 

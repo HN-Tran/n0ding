@@ -19,6 +19,7 @@ import (
 type Config struct {
 	Server       Server
 	Storage      Storage
+	Operator     Operator
 	Repositories []Repository
 }
 
@@ -52,6 +53,10 @@ type Storage struct {
 	MinFreeBytes  int64
 }
 
+type Operator struct {
+	TokenFile string
+}
+
 type Repository struct {
 	Name                 string
 	Type                 string
@@ -75,6 +80,9 @@ func Load(path string) (Config, error) {
 	}
 	if !filepath.IsAbs(cfg.Storage.Path) {
 		cfg.Storage.Path = filepath.Clean(filepath.Join(filepath.Dir(path), cfg.Storage.Path))
+	}
+	if cfg.Operator.TokenFile != "" && !filepath.IsAbs(cfg.Operator.TokenFile) {
+		cfg.Operator.TokenFile = filepath.Clean(filepath.Join(filepath.Dir(path), cfg.Operator.TokenFile))
 	}
 	return cfg, nil
 }
@@ -187,6 +195,13 @@ func Parse(reader io.Reader) (Config, error) {
 				}
 			default:
 				return Config{}, fmt.Errorf("line %d: unknown storage key %q", lineNumber, key)
+			}
+		case section == "operator":
+			switch key {
+			case "token_file":
+				cfg.Operator.TokenFile = value
+			default:
+				return Config{}, fmt.Errorf("line %d: unknown operator key %q", lineNumber, key)
 			}
 		case current != nil:
 			switch key {

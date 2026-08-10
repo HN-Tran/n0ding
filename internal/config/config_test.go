@@ -26,6 +26,9 @@ high_watermark = "0.9"
 low_watermark = "0.75"
 min_free_bytes = "10737418240"
 
+[operator]
+token_file = "./operator-token"
+
 [repository.npm]
 type = "npm"
 path = "/npm/"
@@ -50,6 +53,9 @@ forward_authorization = false
 	if cfg.Storage.MaxBytes != 107374182400 || cfg.Storage.MinFreeBytes != 10737418240 ||
 		cfg.Storage.HighWatermark != 0.9 || cfg.Storage.LowWatermark != 0.75 {
 		t.Fatalf("storage quota = %#v", cfg.Storage)
+	}
+	if cfg.Operator.TokenFile != "./operator-token" {
+		t.Fatalf("operator config = %#v", cfg.Operator)
 	}
 	if len(cfg.Repositories) != 1 {
 		t.Fatalf("repositories = %d", len(cfg.Repositories))

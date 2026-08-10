@@ -174,6 +174,68 @@ func TestPressureCollectionRemovesLRUUntilLowWatermark(t *testing.T) {
 	}
 }
 
+func TestOperatorGCRequiresSeparateBearerToken(t *testing.T) {
+	token := strings.Repeat("a", 32)
+	tokenFile := filepath.Join(t.TempDir(), "operator-token")
+	if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(config.Config{
+		Server:   config.Server{PublicBaseURL: "http://packages.test"},
+		Storage:  config.Storage{Path: t.TempDir(), MaxAge: time.Hour, GCInterval: time.Hour, StaleTempAge: time.Hour},
+		Operator: config.Operator{TokenFile: tokenFile},
+		Repositories: []config.Repository{{
+			Name: "npm", Type: "npm", Path: "/npm/",
+			Upstream: "https://registry.npmjs.org", TTL: time.Hour,
+		}},
+	}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, authorization := range map[string]string{
+		"missing":               "",
+		"without bearer scheme": token,
+		"wrong":                 "Bearer " + strings.Repeat("b", 32),
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/operator/gc", nil)
+			request.Header.Set("Authorization", authorization)
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/operator/gc", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"trigger": "operator"`) {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestOperatorGCIsHiddenWhenTokenIsNotConfigured(t *testing.T) {
+	server, err := New(config.Config{
+		Server:  config.Server{PublicBaseURL: "http://packages.test"},
+		Storage: config.Storage{Path: t.TempDir(), MaxAge: time.Hour, GCInterval: time.Hour, StaleTempAge: time.Hour},
+		Repositories: []config.Repository{{
+			Name: "npm", Type: "npm", Path: "/npm/",
+			Upstream: "https://registry.npmjs.org", TTL: time.Hour,
+		}},
+	}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/operator/gc", nil)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestDashboardUsesOperatorAPIAndAccessibleStatus(t *testing.T) {
 	server, err := New(config.Config{
 		Server:  config.Server{PublicBaseURL: "http://packages.test"},

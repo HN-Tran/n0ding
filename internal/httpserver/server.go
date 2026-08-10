@@ -2,12 +2,14 @@ package httpserver
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"log/slog"
 	"math"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -24,20 +26,21 @@ import (
 )
 
 type Server struct {
-	mux          *http.ServeMux
-	handler      http.Handler
-	version      string
-	publicURL    string
-	started      time.Time
-	repositories []repository.Handler
-	byName       map[string]repository.Handler
-	stores       []managedStore
-	maxAge       time.Duration
-	gcInterval   time.Duration
-	logger       *slog.Logger
-	storage      *storagecontroller.Controller
-	storagePath  string
-	gc           *maintenance.Coordinator
+	mux           *http.ServeMux
+	handler       http.Handler
+	version       string
+	publicURL     string
+	started       time.Time
+	repositories  []repository.Handler
+	byName        map[string]repository.Handler
+	stores        []managedStore
+	maxAge        time.Duration
+	gcInterval    time.Duration
+	logger        *slog.Logger
+	storage       *storagecontroller.Controller
+	storagePath   string
+	gc            *maintenance.Coordinator
+	operatorToken string
 }
 
 type managedStore struct {
@@ -79,6 +82,16 @@ func New(cfg config.Config, version string, logger *slog.Logger) (*Server, error
 		gcInterval:  cfg.Storage.GCInterval,
 		logger:      logger,
 		storagePath: cfg.Storage.Path,
+	}
+	if cfg.Operator.TokenFile != "" {
+		tokenBytes, err := os.ReadFile(cfg.Operator.TokenFile)
+		if err != nil {
+			return nil, fmt.Errorf("read operator token file: %w", err)
+		}
+		server.operatorToken = strings.TrimSpace(string(tokenBytes))
+		if len(server.operatorToken) < 32 || len(server.operatorToken) > 4096 {
+			return nil, fmt.Errorf("operator token must contain between 32 and 4096 non-whitespace bytes")
+		}
 	}
 
 	for _, configuredRepository := range cfg.Repositories {
@@ -183,11 +196,43 @@ func New(cfg config.Config, version string, logger *slog.Logger) (*Server, error
 	server.mux.HandleFunc("/healthz", server.health)
 	server.mux.HandleFunc("/api/v1/status", server.status)
 	server.mux.HandleFunc("/api/v1/operator", server.operatorStatus)
+	server.mux.HandleFunc("/api/v1/operator/gc", server.operatorGC)
 	server.mux.HandleFunc("/api/v1/repositories/", server.repositoryAPI)
 	server.mux.HandleFunc("/metrics", server.metrics)
 	server.mux.HandleFunc("/", server.dashboard)
 	server.handler = securityHeaders(server.mux)
 	return server, nil
+}
+
+func (s *Server) operatorGC(writer http.ResponseWriter, request *http.Request) {
+	if request.URL.Path != "/api/v1/operator/gc" || s.operatorToken == "" {
+		http.NotFound(writer, request)
+		return
+	}
+	if request.Method != http.MethodPost {
+		writer.Header().Set("Allow", http.MethodPost)
+		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	authorization := request.Header.Get("Authorization")
+	if !strings.HasPrefix(authorization, "Bearer ") {
+		writer.Header().Set("WWW-Authenticate", `Bearer realm="n0ding-operator"`)
+		http.Error(writer, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	provided := strings.TrimPrefix(authorization, "Bearer ")
+	if len(provided) != len(s.operatorToken) || subtle.ConstantTimeCompare([]byte(provided), []byte(s.operatorToken)) != 1 {
+		writer.Header().Set("WWW-Authenticate", `Bearer realm="n0ding-operator"`)
+		http.Error(writer, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	run, accepted := s.gc.Run(request.Context(), maintenance.TriggerOperator)
+	if !accepted {
+		writer.WriteHeader(http.StatusConflict)
+	} else if run.Error != "" {
+		writer.WriteHeader(http.StatusInternalServerError)
+	}
+	writeJSON(writer, run)
 }
 
 func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
