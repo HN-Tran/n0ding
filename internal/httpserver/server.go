@@ -332,6 +332,22 @@ func (s *Server) metrics(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	writer.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	fmt.Fprintln(writer, "# HELP n0ding_repository_requests_total Repository requests received.")
+	fmt.Fprintln(writer, "# TYPE n0ding_repository_requests_total counter")
+	fmt.Fprintln(writer, "# HELP n0ding_repository_cache_hits_total Repository requests served from cache.")
+	fmt.Fprintln(writer, "# TYPE n0ding_repository_cache_hits_total counter")
+	fmt.Fprintln(writer, "# HELP n0ding_repository_cache_misses_total Repository cache misses.")
+	fmt.Fprintln(writer, "# TYPE n0ding_repository_cache_misses_total counter")
+	fmt.Fprintln(writer, "# HELP n0ding_repository_errors_total Repository request errors.")
+	fmt.Fprintln(writer, "# TYPE n0ding_repository_errors_total counter")
+	fmt.Fprintln(writer, "# HELP n0ding_repository_client_canceled_total Repository requests canceled by clients.")
+	fmt.Fprintln(writer, "# TYPE n0ding_repository_client_canceled_total counter")
+	fmt.Fprintln(writer, "# HELP n0ding_repository_range_requests_total Repository byte-range requests.")
+	fmt.Fprintln(writer, "# TYPE n0ding_repository_range_requests_total counter")
+	fmt.Fprintln(writer, "# HELP n0ding_repository_storage_bytes Complete cached body bytes by repository.")
+	fmt.Fprintln(writer, "# TYPE n0ding_repository_storage_bytes gauge")
+	fmt.Fprintln(writer, "# HELP n0ding_repository_cache_objects Complete cached objects by repository.")
+	fmt.Fprintln(writer, "# TYPE n0ding_repository_cache_objects gauge")
 	for _, repository := range s.repositories {
 		snapshot := repository.Snapshot()
 		label := fmt.Sprintf(`repository=%q,type=%q`, snapshot.Name, snapshot.Type)
@@ -344,6 +360,51 @@ func (s *Server) metrics(writer http.ResponseWriter, request *http.Request) {
 		fmt.Fprintf(writer, "n0ding_repository_storage_bytes{%s} %d\n", label, snapshot.StorageBytes)
 		fmt.Fprintf(writer, "n0ding_repository_cache_objects{%s} %d\n", label, snapshot.CacheObjects)
 	}
+	if s.storage != nil {
+		storage := s.storage.Snapshot()
+		fmt.Fprintln(writer, "# HELP n0ding_storage_committed_bytes Bytes committed to complete cache objects.")
+		fmt.Fprintln(writer, "# TYPE n0ding_storage_committed_bytes gauge")
+		fmt.Fprintf(writer, "n0ding_storage_committed_bytes %d\n", storage.CommittedBytes)
+		fmt.Fprintln(writer, "# HELP n0ding_storage_reserved_bytes Bytes reserved by in-flight cache writes.")
+		fmt.Fprintln(writer, "# TYPE n0ding_storage_reserved_bytes gauge")
+		fmt.Fprintf(writer, "n0ding_storage_reserved_bytes %d\n", storage.ReservedBytes)
+		fmt.Fprintln(writer, "# HELP n0ding_storage_max_bytes Configured global cache budget.")
+		fmt.Fprintln(writer, "# TYPE n0ding_storage_max_bytes gauge")
+		fmt.Fprintf(writer, "n0ding_storage_max_bytes %d\n", storage.MaxBytes)
+		fmt.Fprintln(writer, "# HELP n0ding_storage_pressure Whether usage is at or above the high watermark.")
+		fmt.Fprintln(writer, "# TYPE n0ding_storage_pressure gauge")
+		fmt.Fprintf(writer, "n0ding_storage_pressure %d\n", boolMetric(storage.Pressure))
+		fmt.Fprintln(writer, "# HELP n0ding_storage_bypass_objects_total Objects proxied without cache admission.")
+		fmt.Fprintln(writer, "# TYPE n0ding_storage_bypass_objects_total counter")
+		fmt.Fprintf(writer, "n0ding_storage_bypass_objects_total %d\n", storage.BypassObjects)
+		fmt.Fprintln(writer, "# HELP n0ding_storage_bypass_bytes_total Known bytes proxied without cache admission.")
+		fmt.Fprintln(writer, "# TYPE n0ding_storage_bypass_bytes_total counter")
+		fmt.Fprintf(writer, "n0ding_storage_bypass_bytes_total %d\n", storage.BypassBytes)
+	}
+	gc := s.gc.Snapshot()
+	fmt.Fprintln(writer, "# HELP n0ding_gc_running Whether a garbage collection run is active.")
+	fmt.Fprintln(writer, "# TYPE n0ding_gc_running gauge")
+	fmt.Fprintf(writer, "n0ding_gc_running %d\n", boolMetric(gc.State == "running"))
+	if gc.Last != nil {
+		fmt.Fprintln(writer, "# HELP n0ding_gc_last_removed_bytes Bytes removed by the last garbage collection run.")
+		fmt.Fprintln(writer, "# TYPE n0ding_gc_last_removed_bytes gauge")
+		fmt.Fprintf(writer, "n0ding_gc_last_removed_bytes %d\n", gc.Last.Result.RemovedBytes)
+		fmt.Fprintln(writer, "# HELP n0ding_gc_last_errors Errors recorded by the last garbage collection run.")
+		fmt.Fprintln(writer, "# TYPE n0ding_gc_last_errors gauge")
+		fmt.Fprintf(writer, "n0ding_gc_last_errors %d\n", gc.Last.Result.Errors)
+		if gc.Last.FinishedAt != nil {
+			fmt.Fprintln(writer, "# HELP n0ding_gc_last_finished_timestamp_seconds Unix timestamp when the last garbage collection run finished.")
+			fmt.Fprintln(writer, "# TYPE n0ding_gc_last_finished_timestamp_seconds gauge")
+			fmt.Fprintf(writer, "n0ding_gc_last_finished_timestamp_seconds %d\n", gc.Last.FinishedAt.Unix())
+		}
+	}
+}
+
+func boolMetric(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func (s *Server) dashboard(writer http.ResponseWriter, request *http.Request) {
@@ -379,64 +440,136 @@ var dashboardTemplate = template.Must(template.New("dashboard").Parse(`<!doctype
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>n0ding</title>
+  <title>n0ding operator</title>
   <style>
-    :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
-    body { margin: 0; background: #0a0c0b; color: #e8eee9; }
-    main { width: min(960px, calc(100% - 32px)); margin: 64px auto; }
-    header { display: flex; justify-content: space-between; align-items: baseline; gap: 24px; }
-    h1 { font-size: clamp(2rem, 8vw, 4.5rem); margin: 0; letter-spacing: -.08em; }
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #090c0a; color: #e8eee9; }
+    main { width: min(1120px, calc(100% - 32px)); margin: 48px auto; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 24px; }
+    h1 { font-size: clamp(2.2rem, 8vw, 4.5rem); margin: 0; letter-spacing: -.07em; }
+    h2 { margin: 40px 0 14px; font-size: 1rem; color: #aebbb2; }
+    h3 { margin: 0 0 18px; font-size: 1rem; }
     .accent, a { color: #8cf0ae; }
     .muted { color: #8b988f; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-top: 48px; }
-    article { border: 1px solid #29332c; background: #101411; padding: 20px; border-radius: 10px; }
-    article h2 { margin: 0 0 20px; font-size: 1rem; }
-    dl { display: grid; grid-template-columns: 1fr auto; gap: 10px 16px; margin: 0; }
+    .status { border: 1px solid #385243; border-radius: 999px; padding: 8px 12px; font-weight: 700; }
+    .status.degraded { border-color: #80642e; color: #ffd37a; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+    article { border: 1px solid #29332c; background: #101411; padding: 20px; border-radius: 12px; min-width: 0; }
+    dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 16px; margin: 0; }
     dt { color: #8b988f; }
-    dd { margin: 0; }
-    pre { overflow: auto; padding: 12px; background: #090b0a; border-radius: 6px; color: #b7f8cc; }
+    dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+    .meter { height: 10px; background: #252d28; border-radius: 999px; overflow: hidden; margin: 18px 0 10px; }
+    .meter > span { display: block; height: 100%; width: 0; background: #65dc8e; transition: width .2s ease; }
+    .meter.pressure > span { background: #ffbd59; }
+    .repo-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+    .repo-head span { overflow-wrap: anywhere; }
+    .repo-link { display: inline-block; min-height: 44px; padding-top: 16px; }
     .empty { grid-column: 1 / -1; }
+    #notice { min-height: 24px; margin-top: 18px; }
+    a:focus-visible { outline: 3px solid #8cf0ae; outline-offset: 3px; }
+    @media (max-width: 560px) {
+      main { margin: 28px auto; }
+      header { align-items: flex-start; flex-direction: column; gap: 12px; }
+      .grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
   <main>
     <header>
       <div>
-        <div class="muted">homelab-native package hub</div>
+        <div class="muted">artifact cache operator</div>
         <h1>n<span class="accent">0</span>ding</h1>
       </div>
-      <div class="muted">v{{.Version}}</div>
+      <div><span id="service-status" class="status">loading</span> <span class="muted">v{{.Version}}</span></div>
     </header>
-    <section id="repositories" class="grid">
+    <div id="notice" class="muted" role="status" aria-live="polite">Loading operator state…</div>
+
+    <h2>Overview</h2>
+    <section class="grid" aria-label="Storage and garbage collection overview">
+      <article>
+        <h3>Storage</h3>
+        <dl>
+          <dt>Committed</dt><dd id="committed">—</dd>
+          <dt>In flight</dt><dd id="reserved">—</dd>
+          <dt>Budget</dt><dd id="budget">—</dd>
+          <dt>Filesystem free</dt><dd id="filesystem-free">—</dd>
+          <dt>Bypassed</dt><dd id="bypassed">—</dd>
+        </dl>
+        <div id="capacity-meter" class="meter" role="progressbar" aria-label="Cache budget used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span></span></div>
+        <div id="capacity-label" class="muted">Quota not loaded</div>
+      </article>
+      <article>
+        <h3>Garbage collection</h3>
+        <dl>
+          <dt>State</dt><dd id="gc-state">—</dd>
+          <dt>Last trigger</dt><dd id="gc-trigger">—</dd>
+          <dt>Last finished</dt><dd id="gc-finished">—</dd>
+          <dt>Removed</dt><dd id="gc-removed">—</dd>
+          <dt>Errors</dt><dd id="gc-errors">—</dd>
+        </dl>
+      </article>
+    </section>
+
+    <h2>Repositories</h2>
+    <section id="repositories" class="grid" aria-label="Repository status">
       <article class="empty">Loading repository status…</article>
     </section>
   </main>
   <script>
-    const escapeHTML = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const escapeHTML = value => String(value).replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
     const size = bytes => {
       if (!bytes) return '0 B';
       const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
       const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
       return (bytes / Math.pow(1024, index)).toFixed(index ? 1 : 0) + ' ' + units[index];
     };
+    const text = (id, value) => { document.getElementById(id).textContent = value; };
+    let refreshing = false;
     async function refresh() {
-      const response = await fetch('/api/v1/status');
-      const data = await response.json();
-      document.querySelector('#repositories').innerHTML = data.repositories.map(repo => ` + "`" + `
-        <article>
-          <h2><span class="accent">●</span> ${escapeHTML(repo.name)} <span class="muted">/${escapeHTML(repo.type)}</span></h2>
-          <dl>
-            <dt>Requests</dt><dd>${repo.requests}</dd>
-            <dt>Cache hit ratio</dt><dd>${(repo.hit_ratio * 100).toFixed(1)}%</dd>
-            <dt>Objects</dt><dd>${repo.cache_objects}</dd>
-            <dt>Storage</dt><dd>${size(repo.storage_bytes)}</dd>
-          </dl>
-          <a href="/api/v1/repositories/${encodeURIComponent(repo.name)}/setup">setup snippet</a>
-        </article>` + "`" + `).join('');
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const response = await fetch('/api/v1/operator', {headers: {'Accept': 'application/json'}});
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const data = await response.json();
+        const storage = data.storage;
+        const serviceStatus = document.getElementById('service-status');
+        serviceStatus.textContent = data.status;
+        serviceStatus.className = 'status' + (data.status === 'ok' ? '' : ' degraded');
+        text('committed', size(storage.committed_bytes));
+        text('reserved', size(storage.reserved_bytes));
+        text('budget', storage.bounded ? size(storage.max_bytes) : 'unbounded');
+        text('filesystem-free', size(storage.filesystem_free_bytes));
+        text('bypassed', storage.bypass_objects + ' objects / ' + size(storage.bypass_bytes));
+        const percent = storage.max_bytes ? Math.min(100, ((storage.committed_bytes + storage.reserved_bytes) / storage.max_bytes) * 100) : 0;
+        const meter = document.getElementById('capacity-meter');
+        meter.className = 'meter' + (storage.pressure ? ' pressure' : '');
+        meter.setAttribute('aria-valuenow', percent.toFixed(1));
+        meter.querySelector('span').style.width = percent + '%';
+        text('capacity-label', storage.bounded ? percent.toFixed(1) + '% used' : 'No storage budget configured');
+        text('gc-state', data.gc.state);
+        const last = data.gc.last;
+        text('gc-trigger', last ? last.trigger : 'none');
+        text('gc-finished', last && last.finished_at ? new Date(last.finished_at).toLocaleString() : 'never');
+        text('gc-removed', last ? last.result.removed_objects + ' objects / ' + size(last.result.removed_bytes) : '—');
+        text('gc-errors', last ? last.result.errors : '0');
+        document.getElementById('repositories').innerHTML = data.repositories.map(repo =>
+          '<article><div class="repo-head"><h3>' + escapeHTML(repo.name) + '</h3><span class="muted">' + escapeHTML(repo.type) + '</span></div>' +
+          '<dl><dt>Requests</dt><dd>' + repo.requests + '</dd><dt>Hits / misses</dt><dd>' + repo.cache_hits + ' / ' + repo.cache_misses + '</dd>' +
+          '<dt>Hit ratio</dt><dd>' + (repo.hit_ratio * 100).toFixed(1) + '%</dd><dt>Errors</dt><dd>' + repo.errors + '</dd>' +
+          '<dt>Objects</dt><dd>' + repo.cache_objects + '</dd><dt>Storage</dt><dd>' + size(repo.storage_bytes) + '</dd></dl>' +
+          '<a class="repo-link" href="/api/v1/repositories/' + encodeURIComponent(repo.name) + '/setup">Client setup</a></article>'
+        ).join('');
+        text('notice', 'Updated ' + new Date(data.generated_at).toLocaleTimeString());
+      } catch (error) {
+        text('notice', 'Operator state unavailable: ' + error.message + '. Showing last known values.');
+      } finally {
+        refreshing = false;
+      }
     }
-    refresh().catch(error => {
-      document.querySelector('#repositories').innerHTML = '<article class="empty">Status unavailable: ' + escapeHTML(error) + '</article>';
-    });
+    refresh();
     setInterval(refresh, 5000);
   </script>
 </body>

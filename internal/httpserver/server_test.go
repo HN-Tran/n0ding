@@ -103,12 +103,52 @@ func TestOperatorEndpointReportsBoundedStorageAndGC(t *testing.T) {
 	if response.GC.State != "idle" || response.GC.Last == nil || response.GC.Last.Trigger != maintenance.TriggerStartup {
 		t.Fatalf("GC snapshot = %#v", response.GC)
 	}
+	metricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	metricsRecorder := httptest.NewRecorder()
+	server.ServeHTTP(metricsRecorder, metricsRequest)
+	for _, expected := range []string{
+		"# TYPE n0ding_storage_committed_bytes gauge",
+		"n0ding_storage_max_bytes 1000",
+		"n0ding_storage_pressure 0",
+		"n0ding_gc_running 0",
+		"n0ding_gc_last_errors 0",
+	} {
+		if !strings.Contains(metricsRecorder.Body.String(), expected) {
+			t.Fatalf("metrics missing %q: %s", expected, metricsRecorder.Body.String())
+		}
+	}
 
 	request = httptest.NewRequest(http.MethodPost, "/api/v1/operator", nil)
 	recorder = httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusMethodNotAllowed || recorder.Header().Get("Allow") != "GET, HEAD" {
 		t.Fatalf("POST status=%d allow=%q", recorder.Code, recorder.Header().Get("Allow"))
+	}
+}
+
+func TestDashboardUsesOperatorAPIAndAccessibleStatus(t *testing.T) {
+	server, err := New(config.Config{
+		Server:  config.Server{PublicBaseURL: "http://packages.test"},
+		Storage: config.Storage{Path: t.TempDir()},
+		Repositories: []config.Repository{{
+			Name: "npm", Type: "npm", Path: "/npm/",
+			Upstream: "https://registry.npmjs.org", TTL: time.Hour,
+		}},
+	}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	for _, expected := range []string{
+		`aria-live="polite"`,
+		`role="progressbar"`,
+		`fetch('/api/v1/operator'`,
+		`aria-label="Repository status"`,
+	} {
+		if !strings.Contains(recorder.Body.String(), expected) {
+			t.Fatalf("dashboard missing %q", expected)
+		}
 	}
 }
 
