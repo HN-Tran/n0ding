@@ -207,11 +207,11 @@ func (s *Store) RemoveCandidate(candidate Candidate) (bool, error) {
 		}
 		return false, err
 	}
-	if err := os.Remove(candidate.metadataPath); err != nil {
-		return false, err
-	}
 	s.bytes.Add(-candidate.Bytes)
 	s.objects.Add(-1)
+	if err := os.Remove(candidate.metadataPath); err != nil {
+		return true, err
+	}
 	return true, nil
 }
 
@@ -521,11 +521,11 @@ func (s *Store) GC(maxAge time.Duration) (result GCResult, err error) {
 		}
 		s.bytes.Add(-info.Size())
 		s.objects.Add(-1)
-		if removeErr := os.Remove(path); removeErr != nil {
-			return removeErr
-		}
 		result.Objects++
 		result.Bytes += info.Size()
+		if removeErr := os.Remove(path); removeErr != nil {
+			result.Skipped++
+		}
 		return nil
 	})
 	if errors.Is(err, os.ErrNotExist) {

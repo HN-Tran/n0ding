@@ -329,14 +329,14 @@ func (s *Server) collectPressure(ctx context.Context) (maintenance.Result, error
 			break
 		}
 		removed, err := item.store.RemoveCandidate(item.candidate)
-		if err != nil {
-			result.SkippedObjects++
-			continue
-		}
 		if removed {
 			result.RemovedObjects++
 			result.RemovedBytes += item.candidate.Bytes
 			s.storage.Remove(item.candidate.Bytes)
+		}
+		if err != nil {
+			result.SkippedObjects++
+			continue
 		}
 	}
 	return result, nil
