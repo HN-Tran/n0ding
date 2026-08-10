@@ -40,6 +40,7 @@ jobs:
           set -euo pipefail
           cp deploy/public/.env.example deploy/public/.env
           cp /etc/ssl/certs/ca-certificates.crt deploy/public/client-ca.pem
+          printf '%064d\n' 0 > deploy/public/operator-token
           docker compose --project-directory deploy/public config --quiet
           docker run --rm \
             --env N0DING_PUBLIC_URL=https://packages.example.com \

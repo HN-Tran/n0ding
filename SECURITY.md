@@ -42,8 +42,8 @@ a best-effort basis.
 ## Current security boundaries
 
 - There is no native n0ding user database, RBAC, or multi-tenancy. The shipped
-  public-VPS profile provides one shared credential at the Caddy edge and
-  removes it before forwarding requests to n0ding.
+  public-VPS profile requires mTLS for every route. Mutating operator actions
+  additionally require a separate bearer token loaded from a mounted file.
 - npm upstream authorization is disabled by default.
 - OCI Bearer credentials are forwarded to the configured upstream. A cached OCI
   response is served only after the upstream authorizes the same request with a
@@ -67,7 +67,11 @@ a best-effort basis.
 - Cached content is trusted as received from the configured upstream.
 - OCI manifests and blobs are SHA-256 verified before cache commit.
 - There is no malware, signature, provenance, or vulnerability scanning.
-- Retention is age-based and does not enforce a strict disk quota.
+- Retention combines age expiry with a shared logical byte budget,
+  high/low-watermark pressure GC, LRU ordering, admission reservations, and a
+  minimum-free-space guard. Independent filesystem alerts remain required
+  because temporary files, metadata, allocation overhead, and unrelated
+  volume users are outside the logical object budget.
 - Range responses are proxied but not partially cached.
 - The local cache supports one n0ding process, not shared-volume writers.
 
