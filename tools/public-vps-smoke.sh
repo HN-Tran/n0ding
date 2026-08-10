@@ -27,6 +27,7 @@ authorityKeyIdentifier=keyid
 EOF
 openssl x509 -req -in "$work/client.csr" -CA "$work/ca.pem" -CAkey "$work/ca.key" -CAcreateserial -days 1 -extfile "$work/client.ext" -out "$work/client.crt"
 cat "$work/client.crt" "$work/client.key" > "$work/client.pem"
+openssl rand -hex 32 > "$work/operator-token"
 cat >"$work/Caddyfile" <<'EOF'
 {
   admin off
@@ -44,7 +45,7 @@ n0ding.test {
 }
 EOF
 docker network create "$network" >/dev/null
-docker run -d --name "$n0ding" --network "$network" --network-alias n0ding -e N0DING_PUBLIC_URL=https://n0ding.test -v "$root/deploy/public/n0ding.toml:/etc/n0ding/n0ding.toml:ro" n0ding:public-vps-ci >/dev/null
+docker run -d --name "$n0ding" --network "$network" --network-alias n0ding -e N0DING_PUBLIC_URL=https://n0ding.test -v "$root/deploy/public/n0ding.toml:/etc/n0ding/n0ding.toml:ro" -v "$work/operator-token:/run/secrets/n0ding-operator-token:ro" n0ding:public-vps-ci >/dev/null
 docker run -d --name "$caddy" --network "$network" -p 443:443 -v "$work/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$work/ca.pem:/etc/caddy/client-ca.pem:ro" caddy:2.10.0-alpine >/dev/null
 caddy_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$caddy")
 test -n "$caddy_ip"
@@ -60,6 +61,8 @@ done
 if [ "$ready" != true ]; then echo 'authenticated HTTPS endpoint did not become ready' >&2; exit 1; fi
 if curl -fsS --cacert "$work/server-ca.crt" https://n0ding.test/healthz >/dev/null 2>&1; then echo 'unauthenticated request succeeded' >&2; exit 1; fi
 curl -fsS "${mtls[@]}" https://n0ding.test/healthz >/dev/null
+if curl -fsS "${mtls[@]}" -X POST https://n0ding.test/api/v1/operator/gc >/dev/null 2>&1; then echo 'operator GC accepted without token' >&2; exit 1; fi
+curl -fsS "${mtls[@]}" -H "Authorization: Bearer $(cat "$work/operator-token")" -X POST https://n0ding.test/api/v1/operator/gc >/dev/null
 python -m pip install --no-deps --target "$work/pip" --no-cache-dir --cert "$work/server-ca.crt" --client-cert "$work/client.pem" --index-url https://n0ding.test/pypi/simple/ idna==3.10
 SSL_CLIENT_CERT="$work/client.pem" uv pip install --system --no-cache --cert "$work/server-ca.crt" --index-url https://n0ding.test/pypi/simple/ idna==3.10
 cat >"$work/npmrc" <<EOF

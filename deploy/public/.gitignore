@@ -2,5 +2,6 @@
 *.key
 *.csr
 client-ca.pem
+operator-token
 client.pem
 client.crt

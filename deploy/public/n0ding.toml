@@ -8,6 +8,13 @@ path = "/data"
 max_age = "720h"
 gc_interval = "1h"
 stale_temp_age = "1h"
+max_bytes = 107374182400
+high_watermark = 0.90
+low_watermark = 0.75
+min_free_bytes = 10737418240
+
+[operator]
+token_file = "/run/secrets/n0ding-operator-token"
 
 [repository.npm]
 type = "npm"

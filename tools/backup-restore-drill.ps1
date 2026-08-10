@@ -427,7 +427,7 @@ function Restore-BackupArchive {
 
     $mutate = ""
     if ($CorruptNpmBody) {
-        $mutate = 'body="$(find /restore/npm -type f -name ''*.body'' -print -quit)"; test -n "$body"; printf x > "$body";'
+        $mutate = 'body="$(find /restore/npm -type f -name ''*.body*'' ! -name ''.body-*'' -print -quit)"; test -n "$body"; printf x > "$body";'
     }
     $restoreScript = 'set -eu; test -z "$(find /restore -mindepth 1 -print -quit)"; mkdir -p /staging; tar -xf /backup/n0ding-backup.tar -C /staging; test -d /staging/data; test -f /staging/config/n0ding.toml; cp -a /staging/data/. /restore/; cp /staging/config/n0ding.toml /backup/restored-config.toml; ' + $mutate
     $timer = [Diagnostics.Stopwatch]::StartNew()

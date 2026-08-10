@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/HN-Tran/n0ding/internal/cache"
 	"github.com/HN-Tran/n0ding/internal/config"
+	"github.com/HN-Tran/n0ding/internal/maintenance"
 )
 
 func TestStatusAndSetupEndpoints(t *testing.T) {
@@ -60,6 +62,203 @@ func TestStatusAndSetupEndpoints(t *testing.T) {
 	handler.ServeHTTP(setupResponse, setupRequest)
 	if got := setupResponse.Body.String(); got != "npm config set registry http://packages.test/npm/\n" {
 		t.Fatalf("setup snippet = %q", got)
+	}
+}
+
+func TestOperatorEndpointReportsBoundedStorageAndGC(t *testing.T) {
+	server, err := New(config.Config{
+		Server: config.Server{PublicBaseURL: "http://packages.test"},
+		Storage: config.Storage{
+			Path:          t.TempDir(),
+			MaxAge:        time.Hour,
+			GCInterval:    time.Hour,
+			MaxBytes:      1_000,
+			HighWatermark: 0.9,
+			LowWatermark:  0.75,
+			MinFreeBytes:  1,
+			StaleTempAge:  time.Hour,
+		},
+		Repositories: []config.Repository{{
+			Name: "npm", Type: "npm", Path: "/npm/",
+			Upstream: "https://registry.npmjs.org", TTL: time.Hour,
+		}},
+	}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/operator", nil)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response operatorResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != "ok" || !response.Storage.Bounded || response.Storage.MaxBytes != 1_000 {
+		t.Fatalf("response = %#v", response)
+	}
+	if response.GC.State != "idle" || response.GC.Last == nil || response.GC.Last.Trigger != maintenance.TriggerStartup {
+		t.Fatalf("GC snapshot = %#v", response.GC)
+	}
+	metricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	metricsRecorder := httptest.NewRecorder()
+	server.ServeHTTP(metricsRecorder, metricsRequest)
+	for _, expected := range []string{
+		"# TYPE n0ding_storage_committed_bytes gauge",
+		"n0ding_storage_max_bytes 1000",
+		"n0ding_storage_pressure 0",
+		"n0ding_gc_running 0",
+		"n0ding_gc_last_errors 0",
+	} {
+		if !strings.Contains(metricsRecorder.Body.String(), expected) {
+			t.Fatalf("metrics missing %q: %s", expected, metricsRecorder.Body.String())
+		}
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/operator", nil)
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusMethodNotAllowed || recorder.Header().Get("Allow") != "GET, HEAD" {
+		t.Fatalf("POST status=%d allow=%q", recorder.Code, recorder.Header().Get("Allow"))
+	}
+}
+
+func TestPressureCollectionRemovesLRUUntilLowWatermark(t *testing.T) {
+	server, err := New(config.Config{
+		Server: config.Server{PublicBaseURL: "http://packages.test"},
+		Storage: config.Storage{
+			Path: t.TempDir(), MaxAge: time.Hour, GCInterval: time.Hour,
+			MaxBytes: 10, HighWatermark: 0.9, LowWatermark: 0.5,
+			StaleTempAge: time.Hour,
+		},
+		Repositories: []config.Repository{{
+			Name: "npm", Type: "npm", Path: "/npm/",
+			Upstream: "https://registry.npmjs.org", TTL: time.Hour,
+		}},
+	}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := server.stores[0].store
+	header := http.Header{"Content-Length": []string{"5"}}
+	if err := store.PutBytes("old", cache.Metadata{Status: http.StatusOK, Header: header.Clone()}, []byte("older")); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if err := store.PutBytes("new", cache.Metadata{Status: http.StatusOK, Header: header.Clone()}, []byte("newer")); err != nil {
+		t.Fatal(err)
+	}
+	if !server.storage.Snapshot().Pressure {
+		t.Fatal("expected storage pressure")
+	}
+	result, err := server.collectPressure(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RemovedObjects != 1 || result.RemovedBytes != 5 {
+		t.Fatalf("result = %#v", result)
+	}
+	if _, found, err := store.Lookup("old", time.Hour); err != nil || found {
+		t.Fatalf("old entry found=%v err=%v", found, err)
+	}
+	if entry, found, err := store.Lookup("new", time.Hour); err != nil || !found {
+		t.Fatalf("new entry found=%v err=%v", found, err)
+	} else {
+		_ = entry.Close()
+	}
+	if snapshot := server.storage.Snapshot(); snapshot.CommittedBytes != 5 || snapshot.Pressure {
+		t.Fatalf("storage = %#v", snapshot)
+	}
+}
+
+func TestOperatorGCRequiresSeparateBearerToken(t *testing.T) {
+	token := strings.Repeat("a", 32)
+	tokenFile := filepath.Join(t.TempDir(), "operator-token")
+	if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(config.Config{
+		Server:   config.Server{PublicBaseURL: "http://packages.test"},
+		Storage:  config.Storage{Path: t.TempDir(), MaxAge: time.Hour, GCInterval: time.Hour, StaleTempAge: time.Hour},
+		Operator: config.Operator{TokenFile: tokenFile},
+		Repositories: []config.Repository{{
+			Name: "npm", Type: "npm", Path: "/npm/",
+			Upstream: "https://registry.npmjs.org", TTL: time.Hour,
+		}},
+	}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, authorization := range map[string]string{
+		"missing":               "",
+		"without bearer scheme": token,
+		"wrong":                 "Bearer " + strings.Repeat("b", 32),
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/operator/gc", nil)
+			request.Header.Set("Authorization", authorization)
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/operator/gc", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"trigger": "operator"`) {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestOperatorGCIsHiddenWhenTokenIsNotConfigured(t *testing.T) {
+	server, err := New(config.Config{
+		Server:  config.Server{PublicBaseURL: "http://packages.test"},
+		Storage: config.Storage{Path: t.TempDir(), MaxAge: time.Hour, GCInterval: time.Hour, StaleTempAge: time.Hour},
+		Repositories: []config.Repository{{
+			Name: "npm", Type: "npm", Path: "/npm/",
+			Upstream: "https://registry.npmjs.org", TTL: time.Hour,
+		}},
+	}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/operator/gc", nil)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestDashboardUsesOperatorAPIAndAccessibleStatus(t *testing.T) {
+	server, err := New(config.Config{
+		Server:  config.Server{PublicBaseURL: "http://packages.test"},
+		Storage: config.Storage{Path: t.TempDir()},
+		Repositories: []config.Repository{{
+			Name: "npm", Type: "npm", Path: "/npm/",
+			Upstream: "https://registry.npmjs.org", TTL: time.Hour,
+		}},
+	}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	for _, expected := range []string{
+		`aria-live="polite"`,
+		`role="progressbar"`,
+		`fetch('/api/v1/operator'`,
+		`aria-label="Repository status"`,
+	} {
+		if !strings.Contains(recorder.Body.String(), expected) {
+			t.Fatalf("dashboard missing %q", expected)
+		}
 	}
 }
 
@@ -218,7 +417,7 @@ func TestNewRunsStartupCacheMaintenance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bytes, objects, err := store.Size()
+	bytes, objects, err := store.Reconcile()
 	if err != nil {
 		t.Fatal(err)
 	}

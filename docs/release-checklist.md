@@ -105,12 +105,11 @@ revocation or token-lifetime evidence.
 - [x] Restore into a fresh volume and revalidate npm lockfile integrity plus
   recorded OCI digests.
 - [x] Record restore duration, failure handling, and rollback procedure.
-- [x] Record the `v0.1-private` decision: age-only retention is conditionally
-  acceptable for a disposable, capacity-monitored private-alpha cache.
+- [x] Implement a shared `max_bytes` budget, admission reservations,
+  high/low-watermark pressure GC, LRU ordering, and filesystem headroom.
 - [ ] Close the disk-capacity gate after the real seven-day soak by recording
-  the intended deployment's volume capacity, alert thresholds, growth
-  headroom, and explicit acceptance of the missing strict byte quota; otherwise
-  implement the aggregate `max_bytes` design first.
+  the intended deployment's volume capacity, alert thresholds, and growth
+  headroom.
 
 The deterministic [stopped Compose backup/restore drill](backup-restore-drill.md)
 also proves restored identity checks, archive/restored-state canary scanning,
@@ -131,10 +130,9 @@ observed ingress, backup/restore validation, canary-scan references,
 status/metrics checks, safe shutdown/restart commands, rollback steps, and
 explicit unsupported-use warnings.
 
-Passing that checklist does not close the full `v0.1-private` trust gate. It
-does not prove real private-provider credentials, trusted TLS client matrices,
-real pip/uv compatibility, strict byte-quota behavior, or the uninterrupted
-seven-day soak.
+Passing that checklist does not close the full `v0.1` trust gate. It does not
+prove real private-provider credentials, every supported TLS client matrix, or
+the uninterrupted seven-day soak.
 
 ## 4. Real-client and TLS compatibility
 

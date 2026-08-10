@@ -24,6 +24,13 @@ path = "/data"
 max_age = "720h"
 gc_interval = "1h"
 stale_temp_age = "1h"
+max_bytes = 107374182400
+high_watermark = 0.90
+low_watermark = 0.75
+min_free_bytes = 10737418240
+
+[operator]
+token_file = "/run/secrets/n0ding-operator-token"
 
 [repository.npm]
 type = "npm"
@@ -73,6 +80,10 @@ internal n0ding container.
 | `max_age` | `720h` | Delete complete objects this old, measured from cache commit time |
 | `gc_interval` | `1h` | Interval between runtime GC passes |
 | `stale_temp_age` | `1h` | Minimum age for `.body-*` and `.metadata-*` cleanup during startup |
+| `max_bytes` | `0` | Shared byte budget across every repository; `0` disables the byte budget |
+| `high_watermark` | `0.90` | Usage ratio that activates pressure GC |
+| `low_watermark` | `0.75` | Pressure GC target ratio |
+| `min_free_bytes` | `0` | Filesystem headroom reserved before cache admission |
 
 All durations use Go duration syntax, for example `30m`, `24h`, or `720h`, and
 must be positive.
@@ -84,9 +95,11 @@ Repository `ttl` and storage `max_age` solve different problems:
 - `max_age` controls disk retention. Startup and periodic GC remove old,
   complete body/metadata pairs even if they are never requested again.
 
-GC is intentionally age-based because the existing metadata already records a
-trusted commit timestamp. It does not implement LRU or a strict byte quota.
-Accessing an object does not extend its `max_age`; a refetch does.
+Age GC uses the trusted commit timestamp. When the shared budget reaches the
+high watermark, pressure GC removes the globally least-recently-used complete
+objects across npm, PyPI, and OCI until usage reaches the low watermark.
+Accessing an object updates its pressure-GC access hint but does not extend its
+`max_age`; a refetch does.
 
 The default `720h` is a compatibility-oriented starting value, not a capacity
 recommendation. Age alone cannot bound disk use when unique package/image
@@ -94,10 +107,27 @@ ingress is unbounded. Private-alpha operators must select `max_age` from their
 volume capacity and credible ingress rate and monitor real filesystem free
 space. See the [retention policy decision](retention-policy.md).
 
+Known download sizes are atomically reserved before cache writes. Downloads
+with unknown sizes, objects that do not fit the budget, and objects that would
+consume reserved filesystem headroom are proxied without caching. Parallel
+downloads therefore cannot independently overbook the same available bytes.
+
 Startup cleanup only considers cache-created temporary filenames older than
 `stale_temp_age`. Runtime GC ignores all temporary files and deletes an object
 only when both its metadata and body exist, metadata parses, and the recorded
 body size matches the file.
+
+## Operator authorization
+
+| Key | Default | Meaning |
+|---|---|---|
+| `token_file` | empty | File containing the bearer token for mutating operator endpoints |
+
+`[operator]` is optional. Without `token_file`, mutating operator routes are
+not registered as usable and return `404`. The token must contain 32 to 4096
+non-whitespace bytes. Keep the file outside source control with owner-only
+permissions. Read-only status, metrics, and dashboard access remain governed
+by the deployment network or mTLS boundary.
 
 ## Repositories
 

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/HN-Tran/n0ding/internal/storage"
 )
 
 func TestPutAndLookup(t *testing.T) {
@@ -52,6 +54,157 @@ func TestPutAndLookup(t *testing.T) {
 	now = now.Add(2 * time.Hour)
 	if _, found, err := store.Lookup("npm:package", time.Hour); err != nil || found {
 		t.Fatalf("expired lookup: found=%v err=%v", found, err)
+	}
+}
+
+func TestLookupRejectsOversizedMetadata(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyPath, metadataPath := store.paths("oversized")
+	if err := os.MkdirAll(filepath.Dir(bodyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bodyPath, []byte("body"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metadataPath, bytes.Repeat([]byte("x"), maxMetadataBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.Lookup("oversized", time.Hour); err == nil || found {
+		t.Fatalf("expected oversized metadata error, found=%v err=%v", found, err)
+	}
+}
+
+func TestReplacementPublishesNewGenerationAtomically(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutBytes("same-key", Metadata{Status: http.StatusOK}, []byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	oldEntry, found, err := store.Lookup("same-key", time.Hour)
+	if err != nil || !found {
+		t.Fatalf("old lookup found=%v err=%v", found, err)
+	}
+	defer oldEntry.Close()
+	oldPath := oldEntry.BodyPath
+
+	if err := store.PutBytes("same-key", Metadata{Status: http.StatusOK}, []byte("other")); err != nil {
+		t.Fatal(err)
+	}
+	newEntry, found, err := store.Lookup("same-key", time.Hour)
+	if err != nil || !found {
+		t.Fatalf("new lookup found=%v err=%v", found, err)
+	}
+	defer newEntry.Close()
+	if newEntry.BodyPath == oldPath {
+		t.Fatal("replacement reused mutable body path")
+	}
+	newBody, err := io.ReadAll(newEntry.Body)
+	if err != nil || string(newBody) != "other" {
+		t.Fatalf("new body = %q, err=%v", newBody, err)
+	}
+	oldBody, err := io.ReadAll(oldEntry.Body)
+	if err != nil || string(oldBody) != "first" {
+		t.Fatalf("open old reader changed: body=%q err=%v", oldBody, err)
+	}
+}
+
+func TestPressureCandidatesFollowLastUseAndRejectStaleGeneration(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+	if err := store.PutBytes("older", Metadata{Status: http.StatusOK}, []byte("old")); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	if err := store.PutBytes("newer", Metadata{Status: http.StatusOK}, []byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	entry, found, err := store.Lookup("older", time.Hour)
+	if err != nil || !found {
+		t.Fatalf("lookup older: found=%v err=%v", found, err)
+	}
+	_ = entry.Close()
+
+	candidates, err := store.Candidates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 2 || candidates[0].LastUsed.After(candidates[1].LastUsed) {
+		t.Fatalf("candidates = %#v", candidates)
+	}
+	// The untouched newer entry is now the least recently used one.
+	if candidates[0].Bytes != int64(len("new")) {
+		t.Fatalf("oldest candidate bytes = %d", candidates[0].Bytes)
+	}
+	stale := candidates[0]
+	if err := store.PutBytes("newer", Metadata{Status: http.StatusOK}, []byte("replacement")); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := store.RemoveCandidate(stale); err != nil || removed {
+		t.Fatalf("stale generation removed=%v err=%v", removed, err)
+	}
+	entry, found, err = store.Lookup("newer", time.Hour)
+	if err != nil || !found {
+		t.Fatalf("replacement lookup: found=%v err=%v", found, err)
+	}
+	defer entry.Close()
+	body, err := io.ReadAll(entry.Body)
+	if err != nil || string(body) != "replacement" {
+		t.Fatalf("replacement body=%q err=%v", body, err)
+	}
+}
+
+func TestQuotaBypassesUnknownLengthWithoutWritingTemp(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := storage.NewController(100, 0.9, 0.75, 0, 0)
+	store.SetController(controller)
+	store.freeBytes = func(string) (int64, error) { return 1_000, nil }
+	var downstream bytes.Buffer
+	if err := store.PutStream("unknown", Metadata{Status: http.StatusOK}, strings.NewReader("payload"), &downstream); err != nil {
+		t.Fatal(err)
+	}
+	if downstream.String() != "payload" {
+		t.Fatalf("downstream = %q", downstream.String())
+	}
+	if _, found, err := store.Lookup("unknown", time.Hour); err != nil || found {
+		t.Fatalf("unknown length cached: found=%v err=%v", found, err)
+	}
+}
+
+func TestQuotaDiscardsUnderstatedBodyButCompletesDownstream(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := storage.NewController(100, 0.9, 0.75, 0, 0)
+	store.SetController(controller)
+	store.freeBytes = func(string) (int64, error) { return 1_000, nil }
+	metadata := Metadata{Status: http.StatusOK, Header: http.Header{"Content-Length": []string{"3"}}}
+	var downstream bytes.Buffer
+	if err := store.PutStream("understated", metadata, strings.NewReader("payload"), &downstream); err != nil {
+		t.Fatal(err)
+	}
+	if downstream.String() != "payload" {
+		t.Fatalf("downstream = %q", downstream.String())
+	}
+	if _, found, err := store.Lookup("understated", time.Hour); err != nil || found {
+		t.Fatalf("understated body cached: found=%v err=%v", found, err)
+	}
+	snapshot := controller.Snapshot()
+	if snapshot.ReservedBytes != 0 || snapshot.BypassObjects != 1 || snapshot.BypassBytes != 7 {
+		t.Fatalf("snapshot = %#v", snapshot)
 	}
 }
 
@@ -164,7 +317,7 @@ func TestGCDeletesOnlyOldCompleteObjectsAndIgnoresTemps(t *testing.T) {
 	}
 
 	now = now.Add(2 * time.Hour)
-	orphanMetadataBody, orphanMetadataPath := store.paths("orphan-metadata")
+	orphanMetadataBody, orphanMetadataPath := currentBodyPath(t, store, "orphan-metadata")
 	if err := os.Remove(orphanMetadataBody); err != nil {
 		t.Fatal(err)
 	}
@@ -372,9 +525,12 @@ func TestRestoredIncompleteOrCorruptObjectsAreNeverCountedAsComplete(t *testing.
 			); err != nil {
 				t.Fatal(err)
 			}
-			bodyPath, metadataPath := store.paths("restored-object")
+			bodyPath, metadataPath := currentBodyPath(t, store, "restored-object")
 			test.mutate(t, bodyPath, metadataPath)
 
+			if _, _, err := store.Reconcile(); err != nil {
+				t.Fatal(err)
+			}
 			bytes, objects, err := store.Size()
 			if err != nil {
 				t.Fatal(err)
@@ -399,6 +555,20 @@ func TestRestoredIncompleteOrCorruptObjectsAreNeverCountedAsComplete(t *testing.
 			}
 		})
 	}
+}
+
+func currentBodyPath(t *testing.T, store *Store, key string) (string, string) {
+	t.Helper()
+	legacyBodyPath, metadataPath := store.paths(key)
+	metadata, err := readMetadata(metadataPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyPath, err := bodyPathForEntry(metadataPath, legacyBodyPath, metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bodyPath, metadataPath
 }
 
 type failAfterWriter struct {

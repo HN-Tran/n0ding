@@ -21,6 +21,13 @@ path = "${N0DING_DATA}"
 max_age = "168h"
 gc_interval = "30m"
 stale_temp_age = "2h"
+max_bytes = "107374182400"
+high_watermark = "0.9"
+low_watermark = "0.75"
+min_free_bytes = "10737418240"
+
+[operator]
+token_file = "./operator-token"
 
 [repository.npm]
 type = "npm"
@@ -43,12 +50,78 @@ forward_authorization = false
 		cfg.Storage.StaleTempAge != 2*time.Hour {
 		t.Fatalf("storage policy = %#v", cfg.Storage)
 	}
+	if cfg.Storage.MaxBytes != 107374182400 || cfg.Storage.MinFreeBytes != 10737418240 ||
+		cfg.Storage.HighWatermark != 0.9 || cfg.Storage.LowWatermark != 0.75 {
+		t.Fatalf("storage quota = %#v", cfg.Storage)
+	}
+	if cfg.Operator.TokenFile != "./operator-token" {
+		t.Fatalf("operator config = %#v", cfg.Operator)
+	}
 	if len(cfg.Repositories) != 1 {
 		t.Fatalf("repositories = %d", len(cfg.Repositories))
 	}
 	repo := cfg.Repositories[0]
 	if repo.Name != "npm" || repo.TTL != 12*time.Hour {
 		t.Fatalf("repository = %#v", repo)
+	}
+}
+
+func TestParseRejectsInvalidWatermarks(t *testing.T) {
+	_, err := Parse(strings.NewReader(`
+[storage]
+low_watermark = "0.9"
+high_watermark = "0.8"
+
+[repository.npm]
+upstream = "https://registry.npmjs.org"
+`))
+	if err == nil || !strings.Contains(err.Error(), "high_watermark") {
+		t.Fatalf("expected watermark error, got %v", err)
+	}
+}
+
+func TestParseRejectsNonFiniteWatermarks(t *testing.T) {
+	for _, value := range []string{"NaN", "+Inf", "-Inf"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := Parse(strings.NewReader(`
+[storage]
+low_watermark = "` + value + `"
+
+[repository.npm]
+upstream = "https://registry.npmjs.org"
+`))
+			if err == nil || !strings.Contains(err.Error(), "low_watermark") {
+				t.Fatalf("expected finite watermark error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestParseRejectsUnsafeRepositoryNames(t *testing.T) {
+	for _, name := range []string{"../outside", "..", "/absolute", "Uppercase", "line\nbreak"} {
+		t.Run(strings.ReplaceAll(name, "/", "_"), func(t *testing.T) {
+			_, err := Parse(strings.NewReader("[repository." + name + "]\nupstream = \"https://registry.npmjs.org\"\n"))
+			if err == nil {
+				t.Fatalf("repository name %q accepted", name)
+			}
+		})
+	}
+}
+
+func TestParseRejectsGeneratedPyPIRouteCollision(t *testing.T) {
+	_, err := Parse(strings.NewReader(`
+[repository.files]
+type = "npm"
+path = "/pypi/files/"
+upstream = "https://registry.npmjs.org"
+
+[repository.pypi]
+type = "pypi"
+path = "/pypi/simple/"
+upstream = "https://pypi.org/simple"
+`))
+	if err == nil || !strings.Contains(err.Error(), "same route") {
+		t.Fatalf("expected generated route collision, got %v", err)
 	}
 }
 

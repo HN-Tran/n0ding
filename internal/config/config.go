@@ -6,17 +6,20 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type Config struct {
 	Server       Server
 	Storage      Storage
+	Operator     Operator
 	Repositories []Repository
 }
 
@@ -40,10 +43,18 @@ func (s Server) LogLevel() slog.Level {
 }
 
 type Storage struct {
-	Path         string
-	MaxAge       time.Duration
-	GCInterval   time.Duration
-	StaleTempAge time.Duration
+	Path          string
+	MaxAge        time.Duration
+	GCInterval    time.Duration
+	StaleTempAge  time.Duration
+	MaxBytes      int64
+	HighWatermark float64
+	LowWatermark  float64
+	MinFreeBytes  int64
+}
+
+type Operator struct {
+	TokenFile string
 }
 
 type Repository struct {
@@ -70,6 +81,9 @@ func Load(path string) (Config, error) {
 	if !filepath.IsAbs(cfg.Storage.Path) {
 		cfg.Storage.Path = filepath.Clean(filepath.Join(filepath.Dir(path), cfg.Storage.Path))
 	}
+	if cfg.Operator.TokenFile != "" && !filepath.IsAbs(cfg.Operator.TokenFile) {
+		cfg.Operator.TokenFile = filepath.Clean(filepath.Join(filepath.Dir(path), cfg.Operator.TokenFile))
+	}
 	return cfg, nil
 }
 
@@ -81,10 +95,12 @@ func Parse(reader io.Reader) (Config, error) {
 			Log:           "info",
 		},
 		Storage: Storage{
-			Path:         "./data",
-			MaxAge:       30 * 24 * time.Hour,
-			GCInterval:   time.Hour,
-			StaleTempAge: time.Hour,
+			Path:          "./data",
+			MaxAge:        30 * 24 * time.Hour,
+			GCInterval:    time.Hour,
+			StaleTempAge:  time.Hour,
+			HighWatermark: 0.90,
+			LowWatermark:  0.75,
 		},
 	}
 
@@ -157,8 +173,35 @@ func Parse(reader io.Reader) (Config, error) {
 				if err != nil {
 					return Config{}, fmt.Errorf("line %d: invalid stale_temp_age: %w", lineNumber, err)
 				}
+			case "max_bytes":
+				cfg.Storage.MaxBytes, err = strconv.ParseInt(value, 10, 64)
+				if err != nil {
+					return Config{}, fmt.Errorf("line %d: invalid max_bytes: %w", lineNumber, err)
+				}
+			case "high_watermark":
+				cfg.Storage.HighWatermark, err = strconv.ParseFloat(value, 64)
+				if err != nil {
+					return Config{}, fmt.Errorf("line %d: invalid high_watermark: %w", lineNumber, err)
+				}
+			case "low_watermark":
+				cfg.Storage.LowWatermark, err = strconv.ParseFloat(value, 64)
+				if err != nil {
+					return Config{}, fmt.Errorf("line %d: invalid low_watermark: %w", lineNumber, err)
+				}
+			case "min_free_bytes":
+				cfg.Storage.MinFreeBytes, err = strconv.ParseInt(value, 10, 64)
+				if err != nil {
+					return Config{}, fmt.Errorf("line %d: invalid min_free_bytes: %w", lineNumber, err)
+				}
 			default:
 				return Config{}, fmt.Errorf("line %d: unknown storage key %q", lineNumber, key)
+			}
+		case section == "operator":
+			switch key {
+			case "token_file":
+				cfg.Operator.TokenFile = value
+			default:
+				return Config{}, fmt.Errorf("line %d: unknown operator key %q", lineNumber, key)
 			}
 		case current != nil:
 			switch key {
@@ -219,6 +262,20 @@ func (c Config) Validate() error {
 	if c.Storage.StaleTempAge <= 0 {
 		return errors.New("storage.stale_temp_age must be positive")
 	}
+	if c.Storage.MaxBytes < 0 {
+		return errors.New("storage.max_bytes must not be negative")
+	}
+	if c.Storage.MinFreeBytes < 0 {
+		return errors.New("storage.min_free_bytes must not be negative")
+	}
+	if math.IsNaN(c.Storage.LowWatermark) || math.IsInf(c.Storage.LowWatermark, 0) ||
+		c.Storage.LowWatermark <= 0 || c.Storage.LowWatermark >= 1 {
+		return errors.New("storage.low_watermark must be greater than 0 and less than 1")
+	}
+	if math.IsNaN(c.Storage.HighWatermark) || math.IsInf(c.Storage.HighWatermark, 0) ||
+		c.Storage.HighWatermark <= c.Storage.LowWatermark || c.Storage.HighWatermark >= 1 {
+		return errors.New("storage.high_watermark must be greater than low_watermark and less than 1")
+	}
 	if len(c.Repositories) == 0 {
 		return errors.New("at least one repository is required")
 	}
@@ -227,6 +284,9 @@ func (c Config) Validate() error {
 	names := make(map[string]struct{})
 	for index := range c.Repositories {
 		repo := &c.Repositories[index]
+		if !validRepositoryName(repo.Name) {
+			return fmt.Errorf("repository name %q must use 1-63 lowercase letters, digits, dots, underscores, or hyphens and may not contain path segments", repo.Name)
+		}
 		if _, exists := names[repo.Name]; exists {
 			return fmt.Errorf("duplicate repository name %q", repo.Name)
 		}
@@ -244,9 +304,16 @@ func (c Config) Validate() error {
 			return fmt.Errorf("repository %q: path must start and end with /", repo.Name)
 		}
 		if previous, exists := paths[repo.Path]; exists {
-			return fmt.Errorf("repositories %q and %q use the same path", previous, repo.Name)
+			return fmt.Errorf("repositories %q and %q register the same route %q", previous, repo.Name, repo.Path)
 		}
 		paths[repo.Path] = repo.Name
+		if repo.Type == "pypi" {
+			filePath := strings.TrimSuffix(repo.Path, "simple/") + "files/"
+			if previous, exists := paths[filePath]; exists {
+				return fmt.Errorf("repositories %q and %q register the same route %q", previous, repo.Name, filePath)
+			}
+			paths[filePath] = repo.Name
+		}
 		upstream, err := url.Parse(repo.Upstream)
 		if err != nil || upstream.Scheme == "" || upstream.Host == "" {
 			return fmt.Errorf("repository %q: upstream must be an absolute URL", repo.Name)
@@ -272,6 +339,19 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func validRepositoryName(name string) bool {
+	if len(name) == 0 || len(name) > 63 || name == "." || name == ".." {
+		return false
+	}
+	for index, character := range name {
+		if character > unicode.MaxASCII || !(unicode.IsLower(character) || unicode.IsDigit(character) ||
+			(index > 0 && (character == '.' || character == '_' || character == '-'))) {
+			return false
+		}
+	}
+	return true
 }
 
 func splitCSV(value string) []string {
