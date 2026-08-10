@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -194,16 +195,28 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (s *Server) RunMaintenance(ctx context.Context) {
-	if s.maxAge <= 0 || s.gcInterval <= 0 {
+	if s.gcInterval <= 0 {
 		return
 	}
-	ticker := time.NewTicker(s.gcInterval)
-	defer ticker.Stop()
+	scheduleTicker := time.NewTicker(s.gcInterval)
+	defer scheduleTicker.Stop()
+	pressureTicker := time.NewTicker(30 * time.Second)
+	defer pressureTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-pressureTicker.C:
+			if s.storage == nil || !s.storage.Snapshot().Pressure {
+				continue
+			}
+			run, accepted := s.gc.Run(ctx, maintenance.TriggerPressure)
+			if !accepted {
+				s.logger.Debug("pressure cache GC coalesced", "active_run_id", run.ID, "trigger", run.Trigger)
+			} else if run.Error != "" {
+				s.logger.Warn("pressure cache GC failed", "run_id", run.ID, "error", run.Error)
+			}
+		case <-scheduleTicker.C:
 			run, accepted := s.gc.Run(ctx, maintenance.TriggerSchedule)
 			if !accepted {
 				s.logger.Debug("scheduled cache GC coalesced", "active_run_id", run.ID, "trigger", run.Trigger)
@@ -215,6 +228,9 @@ func (s *Server) RunMaintenance(ctx context.Context) {
 }
 
 func (s *Server) collect(ctx context.Context) (maintenance.Result, error) {
+	if s.storage != nil && s.storage.Snapshot().Pressure {
+		return s.collectPressure(ctx)
+	}
 	var result maintenance.Result
 	for _, managed := range s.stores {
 		if err := ctx.Err(); err != nil {
@@ -228,6 +244,55 @@ func (s *Server) collect(ctx context.Context) (maintenance.Result, error) {
 		result.RemovedObjects += storeResult.Objects
 		result.RemovedBytes += storeResult.Bytes
 		result.SkippedObjects += storeResult.Skipped
+		if s.storage != nil {
+			s.storage.Remove(storeResult.Bytes)
+		}
+	}
+	return result, nil
+}
+
+type pressureCandidate struct {
+	store     *cache.Store
+	candidate cache.Candidate
+}
+
+func (s *Server) collectPressure(ctx context.Context) (maintenance.Result, error) {
+	var result maintenance.Result
+	state := s.storage.Snapshot()
+	toRemove := state.CommittedBytes - state.LowBytes
+	if toRemove <= 0 {
+		return result, nil
+	}
+	var candidates []pressureCandidate
+	for _, managed := range s.stores {
+		storeCandidates, err := managed.store.Candidates()
+		if err != nil {
+			return result, fmt.Errorf("repository %q: list pressure candidates: %w", managed.name, err)
+		}
+		for _, candidate := range storeCandidates {
+			candidates = append(candidates, pressureCandidate{store: managed.store, candidate: candidate})
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].candidate.LastUsed.Before(candidates[j].candidate.LastUsed)
+	})
+	for _, item := range candidates {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		if result.RemovedBytes >= toRemove {
+			break
+		}
+		removed, err := item.store.RemoveCandidate(item.candidate)
+		if err != nil {
+			result.SkippedObjects++
+			continue
+		}
+		if removed {
+			result.RemovedObjects++
+			result.RemovedBytes += item.candidate.Bytes
+			s.storage.Remove(item.candidate.Bytes)
+		}
 	}
 	return result, nil
 }

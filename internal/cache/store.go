@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -72,6 +73,16 @@ type GCResult struct {
 	Skipped int64
 }
 
+// Candidate is an immutable snapshot of a complete cache entry considered for
+// pressure collection. Paths stay internal to the store; callers only use the
+// ordering fields and pass the value back to RemoveCandidate.
+type Candidate struct {
+	metadataPath string
+	bodyPath     string
+	Bytes        int64
+	LastUsed     time.Time
+}
+
 func New(root string) (*Store, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("create cache directory: %w", err)
@@ -120,7 +131,88 @@ func (s *Store) Lookup(key string, ttl time.Duration) (Entry, bool, error) {
 	if err != nil {
 		return Entry{}, false, fmt.Errorf("open cache body: %w", err)
 	}
+	// Body mtime is a cheap, crash-safe access hint for pressure GC. Failure to
+	// update it must never turn a valid cache hit into a client error.
+	now := s.now()
+	_ = os.Chtimes(bodyPath, now, now)
 	return Entry{Metadata: metadata, BodyPath: bodyPath, Body: body}, true, nil
+}
+
+// Candidates returns complete entries ordered from least to most recently
+// used. It never exposes temporary, malformed, or incomplete generations.
+func (s *Store) Candidates() ([]Candidate, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var candidates []Candidate
+	err := filepath.WalkDir(s.root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".json" {
+			return nil
+		}
+		legacyBodyPath, valid := bodyPathForMetadata(path)
+		if !valid {
+			return nil
+		}
+		metadata, metadataErr := readMetadata(path)
+		if metadataErr != nil {
+			return nil
+		}
+		bodyPath, bodyErr := bodyPathForEntry(path, legacyBodyPath, metadata)
+		if bodyErr != nil {
+			return nil
+		}
+		info, infoErr := os.Stat(bodyPath)
+		if infoErr != nil || !info.Mode().IsRegular() || info.Size() != metadata.ContentBytes {
+			return nil
+		}
+		lastUsed := info.ModTime()
+		if lastUsed.IsZero() {
+			lastUsed = metadata.StoredAt
+		}
+		candidates = append(candidates, Candidate{metadataPath: path, bodyPath: bodyPath, Bytes: info.Size(), LastUsed: lastUsed})
+		return nil
+	})
+	if errors.Is(err, os.ErrNotExist) {
+		err = nil
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].LastUsed.Before(candidates[j].LastUsed) })
+	return candidates, err
+}
+
+// RemoveCandidate removes an entry only if metadata still references the
+// exact generation observed by Candidates. Concurrent replacements are kept.
+func (s *Store) RemoveCandidate(candidate Candidate) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	legacyBodyPath, valid := bodyPathForMetadata(candidate.metadataPath)
+	if !valid {
+		return false, nil
+	}
+	metadata, err := readMetadata(candidate.metadataPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	bodyPath, err := bodyPathForEntry(candidate.metadataPath, legacyBodyPath, metadata)
+	if err != nil || bodyPath != candidate.bodyPath || metadata.ContentBytes != candidate.Bytes {
+		return false, nil
+	}
+	if err := os.Remove(bodyPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := os.Remove(candidate.metadataPath); err != nil {
+		return false, err
+	}
+	s.bytes.Add(-candidate.Bytes)
+	s.objects.Add(-1)
+	return true, nil
 }
 
 func (s *Store) PutBytes(key string, metadata Metadata, body []byte) error {

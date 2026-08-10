@@ -126,6 +126,54 @@ func TestOperatorEndpointReportsBoundedStorageAndGC(t *testing.T) {
 	}
 }
 
+func TestPressureCollectionRemovesLRUUntilLowWatermark(t *testing.T) {
+	server, err := New(config.Config{
+		Server: config.Server{PublicBaseURL: "http://packages.test"},
+		Storage: config.Storage{
+			Path: t.TempDir(), MaxAge: time.Hour, GCInterval: time.Hour,
+			MaxBytes: 10, HighWatermark: 0.9, LowWatermark: 0.5,
+			StaleTempAge: time.Hour,
+		},
+		Repositories: []config.Repository{{
+			Name: "npm", Type: "npm", Path: "/npm/",
+			Upstream: "https://registry.npmjs.org", TTL: time.Hour,
+		}},
+	}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := server.stores[0].store
+	header := http.Header{"Content-Length": []string{"5"}}
+	if err := store.PutBytes("old", cache.Metadata{Status: http.StatusOK, Header: header.Clone()}, []byte("older")); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if err := store.PutBytes("new", cache.Metadata{Status: http.StatusOK, Header: header.Clone()}, []byte("newer")); err != nil {
+		t.Fatal(err)
+	}
+	if !server.storage.Snapshot().Pressure {
+		t.Fatal("expected storage pressure")
+	}
+	result, err := server.collectPressure(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RemovedObjects != 1 || result.RemovedBytes != 5 {
+		t.Fatalf("result = %#v", result)
+	}
+	if _, found, err := store.Lookup("old", time.Hour); err != nil || found {
+		t.Fatalf("old entry found=%v err=%v", found, err)
+	}
+	if entry, found, err := store.Lookup("new", time.Hour); err != nil || !found {
+		t.Fatalf("new entry found=%v err=%v", found, err)
+	} else {
+		_ = entry.Close()
+	}
+	if snapshot := server.storage.Snapshot(); snapshot.CommittedBytes != 5 || snapshot.Pressure {
+		t.Fatalf("storage = %#v", snapshot)
+	}
+}
+
 func TestDashboardUsesOperatorAPIAndAccessibleStatus(t *testing.T) {
 	server, err := New(config.Config{
 		Server:  config.Server{PublicBaseURL: "http://packages.test"},

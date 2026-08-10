@@ -113,6 +113,56 @@ func TestReplacementPublishesNewGenerationAtomically(t *testing.T) {
 	}
 }
 
+func TestPressureCandidatesFollowLastUseAndRejectStaleGeneration(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+	if err := store.PutBytes("older", Metadata{Status: http.StatusOK}, []byte("old")); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	if err := store.PutBytes("newer", Metadata{Status: http.StatusOK}, []byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	entry, found, err := store.Lookup("older", time.Hour)
+	if err != nil || !found {
+		t.Fatalf("lookup older: found=%v err=%v", found, err)
+	}
+	_ = entry.Close()
+
+	candidates, err := store.Candidates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 2 || candidates[0].LastUsed.After(candidates[1].LastUsed) {
+		t.Fatalf("candidates = %#v", candidates)
+	}
+	// The untouched newer entry is now the least recently used one.
+	if candidates[0].Bytes != int64(len("new")) {
+		t.Fatalf("oldest candidate bytes = %d", candidates[0].Bytes)
+	}
+	stale := candidates[0]
+	if err := store.PutBytes("newer", Metadata{Status: http.StatusOK}, []byte("replacement")); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := store.RemoveCandidate(stale); err != nil || removed {
+		t.Fatalf("stale generation removed=%v err=%v", removed, err)
+	}
+	entry, found, err = store.Lookup("newer", time.Hour)
+	if err != nil || !found {
+		t.Fatalf("replacement lookup: found=%v err=%v", found, err)
+	}
+	defer entry.Close()
+	body, err := io.ReadAll(entry.Body)
+	if err != nil || string(body) != "replacement" {
+		t.Fatalf("replacement body=%q err=%v", body, err)
+	}
+}
+
 func TestQuotaBypassesUnknownLengthWithoutWritingTemp(t *testing.T) {
 	store, err := New(t.TempDir())
 	if err != nil {
