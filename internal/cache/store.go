@@ -343,6 +343,13 @@ func (s *Store) PutStreamVerified(
 		return fmt.Errorf("commit cache body: %w", err)
 	}
 	keepBody = true
+	// Seed the pressure-GC access hint from the same clock used for StoredAt.
+	// Besides keeping fresh entries ordered correctly, this makes stores with
+	// an injected clock deterministic instead of depending on filesystem time.
+	if err := os.Chtimes(generationPath, metadata.StoredAt, metadata.StoredAt); err != nil {
+		_ = os.Remove(generationPath)
+		return fmt.Errorf("set cache body access time: %w", err)
+	}
 	if err := replace(metadataTempPath, metadataPath); err != nil {
 		_ = os.Remove(generationPath)
 		return fmt.Errorf("commit cache metadata: %w", err)
