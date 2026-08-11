@@ -160,10 +160,22 @@ docker pull packages.example.com/library/alpine:latest
 
 ## Rotation and emergency removal
 
-Issue a replacement client certificate from the offline CA, distribute it,
-and retire the old certificate. v0.1 initially trusts certificates by their
-issuing CA, so immediate revocation of one leaked leaf certificate requires a
-new client CA and recreation of Caddy.
+Issue a replacement client certificate from the offline CA and distribute it
+before retiring the old credential. Because v0.1 trusts certificates by their
+issuing CA, immediate revocation of one leaked leaf certificate requires a new
+client CA. Replace `client-ca.pem` atomically and restart only the Caddy TLS
+edge:
+
+```sh
+docker compose restart caddy
+```
+
+Caddy's administrative API is deliberately disabled, so this profile does not
+support hot reloads. Restarting Caddy briefly interrupts new TLS connections,
+but rotates the credential without restarting n0ding or deleting cache data.
+Test the replacement certificate and confirm that the retired certificate
+fails before considering the rotation complete. Keep an existing
+administrative connection available until the new credential has passed.
 
 To stop public access without deleting cache data:
 

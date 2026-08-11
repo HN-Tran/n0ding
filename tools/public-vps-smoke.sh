@@ -14,10 +14,11 @@ cleanup(){
   return "$result"
 }
 trap cleanup EXIT
+client_canary="n0ding-ci-client-${suffix}"
 openssl genpkey -algorithm ED25519 -out "$work/ca.key"
 openssl req -x509 -new -key "$work/ca.key" -days 1 -subj '/CN=n0ding CI CA' -out "$work/ca.pem"
 openssl genpkey -algorithm ED25519 -out "$work/client.key"
-openssl req -new -key "$work/client.key" -subj '/CN=n0ding CI client' -out "$work/client.csr"
+openssl req -new -key "$work/client.key" -subj "/CN=$client_canary" -out "$work/client.csr"
 cat >"$work/client.ext" <<'EOF'
 basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature
@@ -27,6 +28,11 @@ authorityKeyIdentifier=keyid
 EOF
 openssl x509 -req -in "$work/client.csr" -CA "$work/ca.pem" -CAkey "$work/ca.key" -CAcreateserial -days 1 -extfile "$work/client.ext" -out "$work/client.crt"
 cat "$work/client.crt" "$work/client.key" > "$work/client.pem"
+openssl genpkey -algorithm ED25519 -out "$work/rotated-ca.key"
+openssl req -x509 -new -key "$work/rotated-ca.key" -days 1 -subj '/CN=n0ding rotated CI CA' -out "$work/rotated-ca.pem"
+openssl genpkey -algorithm ED25519 -out "$work/rotated-client.key"
+openssl req -new -key "$work/rotated-client.key" -subj '/CN=n0ding rotated CI client' -out "$work/rotated-client.csr"
+openssl x509 -req -in "$work/rotated-client.csr" -CA "$work/rotated-ca.pem" -CAkey "$work/rotated-ca.key" -CAcreateserial -days 1 -extfile "$work/client.ext" -out "$work/rotated-client.crt"
 openssl rand -hex 32 > "$work/operator-token"
 cat >"$work/Caddyfile" <<'EOF'
 {
@@ -78,8 +84,52 @@ sudo cp "$work/client.crt" '/etc/docker/certs.d/n0ding.test:443/client.cert'
 sudo cp "$work/client.key" '/etc/docker/certs.d/n0ding.test:443/client.key'
 docker pull n0ding.test:443/library/alpine:3.20 >/dev/null
 curl -fsS "${mtls[@]}" https://n0ding.test/api/v1/status >"$work/status.json"
+curl -fsS "${mtls[@]}" https://n0ding.test/metrics >"$work/metrics.txt"
 python - "$work/status.json" <<'PY'
 import json, sys
 status = json.load(open(sys.argv[1], encoding="utf-8"))
 assert all(r["errors"] == 0 and r["requests"] > 0 for r in status["repositories"]), status
+PY
+
+# The deployment credential terminates at Caddy. Neither its certificate
+# identity nor the separate operator token may enter cache state, status, or
+# n0ding logs.
+operator_token="$(cat "$work/operator-token")"
+docker logs "$n0ding" >"$work/n0ding.log" 2>&1
+for sensitive in "$client_canary" "$operator_token"; do
+  if grep -aFq "$sensitive" "$work/status.json" "$work/metrics.txt" "$work/n0ding.log"; then
+    echo 'deployment credential appeared in operator output or logs' >&2
+    exit 1
+  fi
+  if docker exec "$n0ding" grep -R -a -F -q "$sensitive" /data; then
+    echo 'deployment credential appeared in cache state' >&2
+    exit 1
+  fi
+done
+
+# Rotate the client CA by restarting only the TLS edge. Caddy's admin API is
+# intentionally disabled, so a hot reload is unavailable. n0ding and its cache
+# remain untouched. The replacement client must work and the old client fail.
+cp "$work/rotated-ca.pem" "$work/ca.pem"
+docker restart "$caddy" >/dev/null
+rotated_mtls=(--cacert "$work/server-ca.crt" --cert "$work/rotated-client.crt" --key "$work/rotated-client.key")
+rotation_ready=false
+for _ in $(seq 1 30); do
+  if curl -fsS "${rotated_mtls[@]}" https://n0ding.test/healthz >/dev/null 2>&1; then rotation_ready=true; break; fi
+  sleep 1
+done
+if [ "$rotation_ready" != true ]; then echo 'rotated client credential did not become ready' >&2; exit 1; fi
+if curl -fsS "${mtls[@]}" https://n0ding.test/healthz >/dev/null 2>&1; then
+  echo 'retired client credential remained valid after CA rotation' >&2
+  exit 1
+fi
+curl -fsS "${rotated_mtls[@]}" https://n0ding.test/api/v1/status >"$work/status-after-rotation.json"
+python - "$work/status.json" "$work/status-after-rotation.json" <<'PY'
+import json, sys
+before = json.load(open(sys.argv[1], encoding="utf-8"))
+after = json.load(open(sys.argv[2], encoding="utf-8"))
+before_objects = sum(r["cache_objects"] for r in before["repositories"])
+after_objects = sum(r["cache_objects"] for r in after["repositories"])
+assert before_objects > 0, before
+assert after_objects == before_objects, (before_objects, after_objects)
 PY

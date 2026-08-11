@@ -95,8 +95,9 @@ deployment behind TLS, upgrades, logs, backups, and uninstalling.
 
 For an internet-reachable VPS, use the separate
 [authenticated public deployment profile](docs/public-vps.md). It terminates
-TLS, requires one shared credential on every route, strips that credential
-before proxying, and does not publish n0ding's container port directly.
+TLS, requires a trusted mTLS client certificate on every route, keeps that
+credential entirely at the TLS edge, and does not publish n0ding's container
+port directly.
 
 ## Build from source
 
