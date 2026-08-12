@@ -29,3 +29,4 @@ upstream = "https://pypi.org/simple"
 ttl = "24h"
 allowed_file_origins = "https://files.pythonhosted.org"
 forward_authorization = false
+# publish_token_file = "../secrets/pypi-publish-token"

@@ -138,6 +138,17 @@ func New(cfg config.Config, version string, logger *slog.Logger) (*Server, error
 				Logger:        logger,
 			})
 		case "pypi":
+			var publishToken string
+			if configuredRepository.PublishTokenFile != "" {
+				tokenBytes, readErr := os.ReadFile(configuredRepository.PublishTokenFile)
+				if readErr != nil {
+					return nil, fmt.Errorf("repository %q: read publish token file: %w", configuredRepository.Name, readErr)
+				}
+				publishToken = strings.TrimSpace(string(tokenBytes))
+				if len(publishToken) < 32 || len(publishToken) > 4096 {
+					return nil, fmt.Errorf("repository %q: publish token must contain between 32 and 4096 non-whitespace bytes", configuredRepository.Name)
+				}
+			}
 			proxy, err = pypiproxy.New(pypiproxy.Options{
 				Name:                 configuredRepository.Name,
 				Path:                 configuredRepository.Path,
@@ -145,8 +156,10 @@ func New(cfg config.Config, version string, logger *slog.Logger) (*Server, error
 				PublicBaseURL:        cfg.Server.PublicBaseURL,
 				TTL:                  configuredRepository.TTL,
 				ForwardAuthorization: configuredRepository.ForwardAuthorization,
+				PublishToken:         publishToken,
 				AllowedFileOrigins:   configuredRepository.AllowedFileOrigins,
 				Store:                store,
+				LocalPath:            filepath.Join(cfg.Storage.Path, configuredRepository.Name, "private"),
 				Logger:               logger,
 			})
 		default:
@@ -160,6 +173,8 @@ func New(cfg config.Config, version string, logger *slog.Logger) (*Server, error
 		server.mux.Handle(configuredRepository.Path, proxy)
 		if pypi, ok := proxy.(*pypiproxy.Proxy); ok {
 			server.mux.Handle(pypi.FilePath(), proxy)
+			server.mux.Handle(pypi.UploadPath(), proxy)
+			server.mux.Handle(pypi.PackagePath(), proxy)
 		}
 	}
 	var committedBytes int64
@@ -174,6 +189,19 @@ func New(cfg config.Config, version string, logger *slog.Logger) (*Server, error
 			committedBytes += bytes
 		}
 	}
+	for _, repositoryHandler := range server.repositories {
+		if pypi, ok := repositoryHandler.(*pypiproxy.Proxy); ok {
+			privateBytes, sizeErr := pypi.PrivateSize()
+			if sizeErr != nil {
+				return nil, fmt.Errorf("repository %q: read private PyPI usage: %w", pypi.Snapshot().Name, sizeErr)
+			}
+			if privateBytes > math.MaxInt64-committedBytes {
+				committedBytes = math.MaxInt64
+			} else {
+				committedBytes += privateBytes
+			}
+		}
+	}
 	if cfg.Storage.MaxBytes > 0 || cfg.Storage.MinFreeBytes > 0 {
 		server.storage = storagecontroller.NewController(
 			cfg.Storage.MaxBytes,
@@ -184,6 +212,11 @@ func New(cfg config.Config, version string, logger *slog.Logger) (*Server, error
 		)
 		for _, managed := range server.stores {
 			managed.store.SetController(server.storage)
+		}
+		for _, repositoryHandler := range server.repositories {
+			if pypi, ok := repositoryHandler.(*pypiproxy.Proxy); ok {
+				pypi.SetStorageController(server.storage)
+			}
 		}
 	}
 	server.gc = maintenance.New(server.collect)

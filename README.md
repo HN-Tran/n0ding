@@ -10,8 +10,9 @@ centralizes npm, pip/uv, and Docker/OCI downloads behind one small service.**
 It is aimed at homelabs, CI runners, developer workstations, and small
 technical teams that need artifact caching without operating the full feature
 set of repository managers such as Sonatype Nexus Repository or JFrog
-Artifactory. n0ding is deliberately read-only: it caches downloads but does not
-currently provide package publishing, users, or RBAC.
+Artifactory. n0ding is read-only by default and does not provide users or
+RBAC. PyPI publishing is available as an opt-in, single-token private-self-use
+feature; existing distribution filenames are immutable.
 
 ```text
 npm / pip / uv / Docker
@@ -54,7 +55,8 @@ npm / pip / uv / Docker
 
 - Not an offline mirror: OCI cache hits still require an upstream
   authorization/digest check.
-- Not a private registry and not a publishing destination.
+- Not a multi-tenant private registry. Optional PyPI publishing is intended
+  only for trusted private self-use.
 - Not an authentication, user-management, RBAC, scanning, signing, or policy
   system.
 - Not a replacement for a production-grade artifact manager.
@@ -269,13 +271,14 @@ credentials into a committed config.
 ## Known limitations
 
 - n0ding is not an offline mirror.
-- There is no private publish support.
+- Private PyPI publishing is opt-in; npm and OCI publishing are unsupported.
 - There is no n0ding client authentication, user management, or RBAC; only the
   existing upstream credential handling is present.
 - Real private-upstream workflows and credential revocation are not yet
   validated.
-- PyPI support is read-only and caches only allowed file origins; publishing is
-  not implemented.
+- PyPI proxying is read-only by default and caches only allowed file origins.
+  `publish_token_file` enables authenticated immutable uploads at
+  `/pypi/legacy/`.
 - Podman has not yet been tested.
 - Range requests are proxied, but partial responses are not cached.
 - Retention is based on maximum object age, not LRU or a strict byte quota;

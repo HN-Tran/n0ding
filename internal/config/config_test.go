@@ -191,6 +191,7 @@ path = "/pypi/simple/"
 upstream = "https://pypi.org/simple"
 ttl = "6h"
 allowed_file_origins = "https://files.pythonhosted.org, https://packages.example.test"
+publish_token_file = "secrets/pypi-token"
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -202,6 +203,21 @@ allowed_file_origins = "https://files.pythonhosted.org, https://packages.example
 		got[0] != "https://files.pythonhosted.org" ||
 		got[1] != "https://packages.example.test" {
 		t.Fatalf("allowed origins = %#v", got)
+	}
+	if got := cfg.Repositories[0].PublishTokenFile; got != "secrets/pypi-token" {
+		t.Fatalf("publish token file = %q", got)
+	}
+}
+
+func TestParseRejectsPublishTokenForNonPyPIRepository(t *testing.T) {
+	_, err := Parse(strings.NewReader(`
+[repository.npm]
+type = "npm"
+upstream = "https://registry.npmjs.org"
+publish_token_file = "secret"
+`))
+	if err == nil || !strings.Contains(err.Error(), "publish_token_file is only supported for pypi") {
+		t.Fatalf("expected publish token type error, got %v", err)
 	}
 }
 
