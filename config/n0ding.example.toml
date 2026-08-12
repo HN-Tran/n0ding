@@ -38,3 +38,5 @@ ttl = "24h"
 # origins plus the configured upstream origin.
 allowed_file_origins = "https://files.pythonhosted.org"
 forward_authorization = false
+# Optional: enables immutable private uploads at /pypi/legacy/.
+# publish_token_file = "../secrets/pypi-publish-token"

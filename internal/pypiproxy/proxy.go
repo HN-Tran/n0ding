@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,7 +16,10 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,9 +31,13 @@ import (
 	"github.com/HN-Tran/n0ding/internal/cache"
 	"github.com/HN-Tran/n0ding/internal/httppolicy"
 	"github.com/HN-Tran/n0ding/internal/repository"
+	storagecontroller "github.com/HN-Tran/n0ding/internal/storage"
 )
 
-const maxSimpleBytes = 64 << 20
+const (
+	maxSimpleBytes = 64 << 20
+	maxUploadBytes = 512 << 20
+)
 
 type Options struct {
 	Name                 string
@@ -37,8 +46,10 @@ type Options struct {
 	PublicBaseURL        string
 	TTL                  time.Duration
 	ForwardAuthorization bool
+	PublishToken         string
 	AllowedFileOrigins   []string
 	Store                *cache.Store
+	LocalPath            string
 	Client               *http.Client
 	Logger               *slog.Logger
 }
@@ -47,17 +58,24 @@ type Proxy struct {
 	name                 string
 	path                 string
 	filePath             string
+	uploadPath           string
+	packagePath          string
 	upstream             *url.URL
 	proxySimpleBaseURL   string
 	proxyFileBaseURL     string
+	proxyPackageBaseURL  string
 	ttl                  time.Duration
 	forwardAuthorization bool
+	publishToken         string
 	allowedFileOrigins   map[string]struct{}
 	store                *cache.Store
+	localPath            string
 	client               *http.Client
 	logger               *slog.Logger
 	stats                counters
 	locks                keyedLocker
+	storage              *storagecontroller.Controller
+	freeBytes            func(string) (int64, error)
 }
 
 type counters struct {
@@ -67,6 +85,14 @@ type counters struct {
 	errors         atomic.Uint64
 	clientCanceled atomic.Uint64
 	rangeRequests  atomic.Uint64
+}
+
+type localPackage struct {
+	Filename       string    `json:"filename"`
+	Hash           string    `json:"sha256"`
+	Size           int64     `json:"size"`
+	RequiresPython string    `json:"requires_python,omitempty"`
+	UploadedAt     time.Time `json:"uploaded_at"`
 }
 
 func New(options Options) (*Proxy, error) {
@@ -88,6 +114,16 @@ func New(options Options) (*Proxy, error) {
 		options.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	filePath := strings.TrimSuffix(options.Path, "simple/") + "files/"
+	uploadPath := strings.TrimSuffix(options.Path, "simple/") + "legacy/"
+	packagePath := strings.TrimSuffix(options.Path, "simple/") + "packages/"
+	if options.PublishToken != "" && options.LocalPath == "" {
+		return nil, fmt.Errorf("local package path is required when publishing is enabled")
+	}
+	if options.LocalPath != "" {
+		if err := os.MkdirAll(options.LocalPath, 0o750); err != nil {
+			return nil, fmt.Errorf("create local package directory: %w", err)
+		}
+	}
 	allowed := map[string]struct{}{originKey(upstream): {}}
 	for _, origin := range options.AllowedFileOrigins {
 		parsed, parseErr := url.Parse(origin)
@@ -100,13 +136,18 @@ func New(options Options) (*Proxy, error) {
 		name:                 options.Name,
 		path:                 options.Path,
 		filePath:             filePath,
+		uploadPath:           uploadPath,
+		packagePath:          packagePath,
 		upstream:             upstream,
 		proxySimpleBaseURL:   strings.TrimRight(options.PublicBaseURL, "/") + strings.TrimSuffix(options.Path, "/"),
 		proxyFileBaseURL:     strings.TrimRight(options.PublicBaseURL, "/") + strings.TrimSuffix(filePath, "/"),
+		proxyPackageBaseURL:  strings.TrimRight(options.PublicBaseURL, "/") + strings.TrimSuffix(packagePath, "/"),
 		ttl:                  options.TTL,
 		forwardAuthorization: options.ForwardAuthorization,
+		publishToken:         options.PublishToken,
 		allowedFileOrigins:   allowed,
 		store:                options.Store,
+		localPath:            options.LocalPath,
 		client:               options.Client,
 		logger:               options.Logger,
 		locks:                keyedLocker{items: make(map[string]*lockRef)},
@@ -117,8 +158,49 @@ func (p *Proxy) FilePath() string {
 	return p.filePath
 }
 
+func (p *Proxy) UploadPath() string { return p.uploadPath }
+
+func (p *Proxy) PackagePath() string { return p.packagePath }
+
+func (p *Proxy) SetStorageController(controller *storagecontroller.Controller) {
+	p.storage = controller
+	p.freeBytes = storagecontroller.FreeBytes
+}
+
+func (p *Proxy) PrivateSize() (int64, error) {
+	var total int64
+	err := filepath.WalkDir(p.localPath, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || strings.HasSuffix(entry.Name(), ".json") {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() {
+			if info.Size() > 0 && total > (1<<63-1)-info.Size() {
+				return errors.New("private PyPI storage size overflow")
+			}
+			total += info.Size()
+		}
+		return nil
+	})
+	return total, err
+}
+
 func (p *Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	p.stats.requests.Add(1)
+	if request.URL.Path == p.uploadPath {
+		p.serveUpload(writer, request)
+		return
+	}
+	if strings.HasPrefix(request.URL.Path, p.packagePath) {
+		p.serveLocalFile(writer, request)
+		return
+	}
 	if request.Method != http.MethodGet && request.Method != http.MethodHead {
 		writer.Header().Set("Allow", "GET, HEAD")
 		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
@@ -171,6 +253,17 @@ func (p *Proxy) SetupSnippet() string {
 }
 
 func (p *Proxy) serveSimple(writer http.ResponseWriter, request *http.Request) {
+	if project := p.simpleProject(request.URL.Path); project != "" && p.localPath != "" {
+		packages, err := p.localPackages(project)
+		if err != nil {
+			p.fail(writer, request, http.StatusInternalServerError, "read private PyPI package index", err)
+			return
+		}
+		if len(packages) > 0 {
+			p.serveLocalProject(writer, request, project, packages)
+			return
+		}
+	}
 	target, err := p.simpleTargetURL(request.URL)
 	if err != nil {
 		p.fail(writer, request, http.StatusBadRequest, "invalid upstream URL", err)
@@ -621,6 +714,334 @@ func (p *Proxy) fail(writer http.ResponseWriter, request *http.Request, status i
 		"error", httppolicy.SafeError(err),
 	)
 	http.Error(writer, message, status)
+}
+
+func (p *Proxy) serveUpload(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		writer.Header().Set("Allow", http.MethodPost)
+		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !p.authorizedUpload(request.Header.Get("Authorization")) {
+		writer.Header().Set("WWW-Authenticate", `Basic realm="n0ding-pypi"`)
+		http.Error(writer, "upload authorization required", http.StatusUnauthorized)
+		return
+	}
+	var reservation *storagecontroller.Reservation
+	if p.storage != nil {
+		freeBytes, err := p.freeBytes(p.localPath)
+		if err != nil {
+			p.fail(writer, request, http.StatusInsufficientStorage, "could not verify PyPI storage capacity", err)
+			return
+		}
+		reservation = p.storage.Reserve(request.ContentLength, freeBytes)
+		if reservation == nil {
+			http.Error(writer, "insufficient storage for PyPI upload", http.StatusInsufficientStorage)
+			return
+		}
+		defer reservation.Release()
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, maxUploadBytes)
+	if err := request.ParseMultipartForm(32 << 20); err != nil {
+		p.fail(writer, request, http.StatusBadRequest, "invalid PyPI upload", err)
+		return
+	}
+	if request.MultipartForm != nil {
+		defer request.MultipartForm.RemoveAll()
+	}
+	project := normalizeProjectName(request.FormValue("name"))
+	if project == "" {
+		p.fail(writer, request, http.StatusBadRequest, "PyPI upload is missing package name", errors.New("missing name"))
+		return
+	}
+	file, header, err := request.FormFile("content")
+	if err != nil {
+		p.fail(writer, request, http.StatusBadRequest, "PyPI upload is missing distribution content", err)
+		return
+	}
+	defer file.Close()
+	pkg, err := p.storeLocalPackage(project, header.Filename, request.FormValue("requires_python"), file)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, os.ErrExist) {
+			status = http.StatusConflict
+		}
+		p.fail(writer, request, status, "could not store PyPI package", err)
+		return
+	}
+	if reservation != nil && !reservation.Commit(pkg.Size, 0) {
+		_ = os.Remove(filepath.Join(p.localProjectPath(project), pkg.Filename))
+		_ = os.Remove(filepath.Join(p.localProjectPath(project), pkg.Filename+".json"))
+		p.fail(writer, request, http.StatusInsufficientStorage, "could not commit PyPI storage reservation", errors.New("storage reservation commit failed"))
+		return
+	}
+	writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	writer.WriteHeader(http.StatusCreated)
+	_, _ = fmt.Fprintf(writer, "stored %s sha256:%s\n", pkg.Filename, pkg.Hash)
+}
+
+func (p *Proxy) authorizedUpload(header string) bool {
+	if p.publishToken == "" || header == "" {
+		return false
+	}
+	scheme, credentials, ok := strings.Cut(header, " ")
+	if !ok {
+		return false
+	}
+	var provided string
+	switch strings.ToLower(scheme) {
+	case "bearer":
+		provided = credentials
+	case "basic":
+		decoded, err := base64.StdEncoding.DecodeString(credentials)
+		if err != nil {
+			return false
+		}
+		_, provided, ok = strings.Cut(string(decoded), ":")
+		if !ok {
+			return false
+		}
+	default:
+		return false
+	}
+	return len(provided) == len(p.publishToken) && subtle.ConstantTimeCompare([]byte(provided), []byte(p.publishToken)) == 1
+}
+
+func (p *Proxy) simpleProject(requestPath string) string {
+	relative := strings.Trim(strings.TrimPrefix(requestPath, p.path), "/")
+	if relative == "" || strings.Contains(relative, "/") {
+		return ""
+	}
+	decoded, err := url.PathUnescape(relative)
+	if err != nil {
+		return ""
+	}
+	return normalizeProjectName(decoded)
+}
+
+func (p *Proxy) serveLocalProject(writer http.ResponseWriter, request *http.Request, project string, packages []localPackage) {
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.Header().Set("X-N0ding-Cache", "LOCAL")
+	if strings.Contains(request.Header.Get("Accept"), "application/vnd.pypi.simple.v1+json") {
+		files := make([]map[string]any, 0, len(packages))
+		for _, pkg := range packages {
+			file := map[string]any{
+				"filename": pkg.Filename,
+				"url":      p.localPackageURL(project, pkg),
+				"hashes":   map[string]string{"sha256": pkg.Hash},
+			}
+			if pkg.RequiresPython != "" {
+				file["requires-python"] = pkg.RequiresPython
+			}
+			files = append(files, file)
+		}
+		writer.Header().Set("Content-Type", "application/vnd.pypi.simple.v1+json")
+		if request.Method == http.MethodHead {
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"meta":  map[string]string{"api-version": "1.0"},
+			"name":  project,
+			"files": files,
+		})
+		return
+	}
+	writer.Header().Set("Content-Type", "application/vnd.pypi.simple.v1+html; charset=utf-8")
+	if request.Method == http.MethodHead {
+		return
+	}
+	var body strings.Builder
+	body.WriteString("<!doctype html><html><body>\n")
+	for _, pkg := range packages {
+		_, _ = fmt.Fprintf(&body, `<a href="%s"`, htmlEscape(p.localPackageURL(project, pkg)))
+		if pkg.RequiresPython != "" {
+			_, _ = fmt.Fprintf(&body, ` data-requires-python="%s"`, htmlEscape(pkg.RequiresPython))
+		}
+		_, _ = fmt.Fprintf(&body, ">%s</a>\n", htmlEscape(pkg.Filename))
+	}
+	body.WriteString("</body></html>\n")
+	_, _ = io.WriteString(writer, body.String())
+}
+
+func (p *Proxy) localPackageURL(project string, pkg localPackage) string {
+	return p.proxyPackageBaseURL + "/" + url.PathEscape(project) + "/" + url.PathEscape(pkg.Filename) + "#sha256=" + pkg.Hash
+}
+
+func (p *Proxy) serveLocalFile(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet && request.Method != http.MethodHead {
+		writer.Header().Set("Allow", "GET, HEAD")
+		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	relative := strings.TrimPrefix(request.URL.Path, p.packagePath)
+	escapedProject, escapedFilename, ok := strings.Cut(relative, "/")
+	if !ok || strings.Contains(escapedFilename, "/") {
+		http.NotFound(writer, request)
+		return
+	}
+	project, projectErr := url.PathUnescape(escapedProject)
+	filename, filenameErr := url.PathUnescape(escapedFilename)
+	if projectErr != nil || filenameErr != nil || normalizeProjectName(project) != project || !safeDistributionFilename(filename) {
+		http.NotFound(writer, request)
+		return
+	}
+	file, err := os.Open(filepath.Join(p.localProjectPath(project), filename))
+	if err != nil {
+		http.NotFound(writer, request)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		http.NotFound(writer, request)
+		return
+	}
+	p.stats.hits.Add(1)
+	writer.Header().Set("Content-Type", "application/octet-stream")
+	writer.Header().Set("X-N0ding-Cache", "LOCAL")
+	http.ServeContent(writer, request, filename, info.ModTime(), file)
+}
+
+func (p *Proxy) storeLocalPackage(project, filename, requiresPython string, source io.Reader) (localPackage, error) {
+	if project == "" || normalizeProjectName(project) != project || !safeDistributionFilename(filename) {
+		return localPackage{}, errors.New("unsafe package name or distribution filename")
+	}
+	unlock := p.locks.lock("private\n" + project + "\n" + filename)
+	defer unlock()
+	directory := p.localProjectPath(project)
+	if err := os.MkdirAll(directory, 0o750); err != nil {
+		return localPackage{}, err
+	}
+	target := filepath.Join(directory, filename)
+	if _, err := os.Stat(target); err == nil {
+		return localPackage{}, fmt.Errorf("%w: distribution already exists", os.ErrExist)
+	} else if !os.IsNotExist(err) {
+		return localPackage{}, err
+	}
+	temp, err := os.CreateTemp(directory, ".upload-*")
+	if err != nil {
+		return localPackage{}, err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	hasher := sha256.New()
+	size, err := io.Copy(io.MultiWriter(temp, hasher), source)
+	if err != nil {
+		temp.Close()
+		return localPackage{}, err
+	}
+	if err := temp.Sync(); err != nil {
+		temp.Close()
+		return localPackage{}, err
+	}
+	if err := temp.Close(); err != nil {
+		return localPackage{}, err
+	}
+	if err := os.Chmod(tempPath, 0o640); err != nil {
+		return localPackage{}, err
+	}
+	// Link within the same directory so an external writer cannot win a race
+	// between the existence check and commit by replacing an existing release.
+	if err := os.Link(tempPath, target); err != nil {
+		if os.IsExist(err) {
+			return localPackage{}, fmt.Errorf("%w: distribution already exists", os.ErrExist)
+		}
+		return localPackage{}, err
+	}
+	if err := os.Remove(tempPath); err != nil {
+		_ = os.Remove(target)
+		return localPackage{}, err
+	}
+	pkg := localPackage{Filename: filename, Hash: hex.EncodeToString(hasher.Sum(nil)), Size: size, RequiresPython: requiresPython, UploadedAt: time.Now().UTC()}
+	metadata, err := json.Marshal(pkg)
+	if err != nil {
+		return localPackage{}, err
+	}
+	if err := os.WriteFile(target+".json", metadata, 0o640); err != nil {
+		_ = os.Remove(target)
+		return localPackage{}, err
+	}
+	return pkg, nil
+}
+
+func (p *Proxy) localPackages(project string) ([]localPackage, error) {
+	entries, err := os.ReadDir(p.localProjectPath(project))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	packages := make([]localPackage, 0)
+	for _, entry := range entries {
+		if entry.IsDir() || strings.HasSuffix(entry.Name(), ".json") || !safeDistributionFilename(entry.Name()) {
+			continue
+		}
+		data, readErr := os.ReadFile(filepath.Join(p.localProjectPath(project), entry.Name()+".json"))
+		var pkg localPackage
+		if readErr == nil {
+			if err := json.Unmarshal(data, &pkg); err != nil {
+				return nil, err
+			}
+		} else if os.IsNotExist(readErr) {
+			packagePath := filepath.Join(p.localProjectPath(project), entry.Name())
+			file, openErr := os.Open(packagePath)
+			if openErr != nil {
+				return nil, openErr
+			}
+			hasher := sha256.New()
+			size, hashErr := io.Copy(hasher, file)
+			closeErr := file.Close()
+			if hashErr != nil {
+				return nil, hashErr
+			}
+			if closeErr != nil {
+				return nil, closeErr
+			}
+			pkg = localPackage{Filename: entry.Name(), Hash: hex.EncodeToString(hasher.Sum(nil)), Size: size}
+		} else {
+			return nil, readErr
+		}
+		packages = append(packages, pkg)
+	}
+	sort.Slice(packages, func(i, j int) bool { return packages[i].Filename < packages[j].Filename })
+	return packages, nil
+}
+
+func (p *Proxy) localProjectPath(project string) string { return filepath.Join(p.localPath, project) }
+
+func safeDistributionFilename(filename string) bool {
+	if filename == "" || strings.ContainsAny(filename, `/\\`) || strings.HasPrefix(filename, ".") {
+		return false
+	}
+	return strings.HasSuffix(filename, ".whl") || strings.HasSuffix(filename, ".tar.gz") || strings.HasSuffix(filename, ".zip")
+}
+
+func normalizeProjectName(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	var builder strings.Builder
+	separator := false
+	for _, character := range name {
+		if character == '-' || character == '_' || character == '.' {
+			separator = builder.Len() > 0
+			continue
+		}
+		if character < 'a' || character > 'z' {
+			if character < '0' || character > '9' {
+				return ""
+			}
+		}
+		if separator {
+			builder.WriteByte('-')
+			separator = false
+		}
+		builder.WriteRune(character)
+	}
+	return builder.String()
+}
+
+func htmlEscape(value string) string {
+	return strings.NewReplacer("&", "&amp;", `"`, "&#34;", "'", "&#39;", "<", "&lt;", ">", "&gt;").Replace(value)
 }
 
 func rewrittenLocation(raw string, pageURL, upstream *url.URL, proxySimpleBaseURL string) string {

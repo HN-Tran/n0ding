@@ -240,7 +240,10 @@ requirements for a future strict aggregate limit are in the
 
 - n0ding is not an offline mirror. OCI cache hits still depend on an upstream
   authorization/digest `HEAD`, and cache misses always need the upstream.
-- There is no private publish support.
+- Private publishing is limited to optional single-token PyPI uploads; npm and
+  OCI publishing are unsupported.
+- Private PyPI distributions count toward the configured storage budget but,
+  unlike cache entries, are not removed by TTL garbage collection.
 - There is no n0ding client authentication, user management, or RBAC. Only
   upstream credential handling exists.
 - Podman remains untested.

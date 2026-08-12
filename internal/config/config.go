@@ -64,6 +64,7 @@ type Repository struct {
 	Upstream             string
 	TTL                  time.Duration
 	ForwardAuthorization bool
+	PublishTokenFile     string
 	AllowedFileOrigins   []string
 }
 
@@ -83,6 +84,11 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.Operator.TokenFile != "" && !filepath.IsAbs(cfg.Operator.TokenFile) {
 		cfg.Operator.TokenFile = filepath.Clean(filepath.Join(filepath.Dir(path), cfg.Operator.TokenFile))
+	}
+	for index := range cfg.Repositories {
+		if cfg.Repositories[index].PublishTokenFile != "" && !filepath.IsAbs(cfg.Repositories[index].PublishTokenFile) {
+			cfg.Repositories[index].PublishTokenFile = filepath.Clean(filepath.Join(filepath.Dir(path), cfg.Repositories[index].PublishTokenFile))
+		}
 	}
 	return cfg, nil
 }
@@ -221,6 +227,8 @@ func Parse(reader io.Reader) (Config, error) {
 				if err != nil {
 					return Config{}, fmt.Errorf("line %d: invalid boolean: %w", lineNumber, err)
 				}
+			case "publish_token_file":
+				current.PublishTokenFile = value
 			case "allowed_file_origins":
 				current.AllowedFileOrigins = splitCSV(value)
 			default:
@@ -296,6 +304,9 @@ func (c Config) Validate() error {
 		}
 		if repo.Type == "oci" && repo.Path != "/v2/" {
 			return fmt.Errorf("repository %q: OCI path must be /v2/", repo.Name)
+		}
+		if repo.PublishTokenFile != "" && repo.Type != "pypi" {
+			return fmt.Errorf("repository %q: publish_token_file is only supported for pypi repositories", repo.Name)
 		}
 		if repo.Type == "pypi" && !strings.HasSuffix(repo.Path, "/simple/") {
 			return fmt.Errorf("repository %q: PyPI path must end with /simple/", repo.Name)

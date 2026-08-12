@@ -1,6 +1,7 @@
-# PyPI read-only adapter design
+# PyPI proxy and private publishing design
 
-Status: read-only adapter implemented and validated with pip and uv.
+Status: read-only adapter validated with pip and uv; optional private uploads
+validated with Twine.
 
 The PyPI adapter is included in the `v0.1.0` public-preview boundary. It reuses
 the shared cache and credential-safety foundations instead of becoming a
@@ -17,8 +18,8 @@ distribution links, optional hash fragments, yanked markers,
 [PEP 503](https://peps.python.org/pep-0503/) and the JSON representation is
 [PEP 691](https://peps.python.org/pep-0691/).
 
-Publishing, the legacy upload API, warehouse administration, search, and
-mirroring the complete project list are out of scope.
+Warehouse administration, search, and mirroring the complete upstream project
+list are out of scope.
 
 ## Request surface
 
@@ -26,12 +27,31 @@ mirroring the complete project list are out of scope.
 /pypi/simple/                     optional root index pass-through/cache
 /pypi/simple/<normalized-name>/   project detail HTML or JSON
 /pypi/files/?url=...              rewritten distribution and metadata URLs
+/pypi/legacy/                     optional authenticated Twine upload
+/pypi/packages/<project>/<file>   immutable private distributions
 ```
 
 The original hash fragment remains visible to pip/uv, and n0ding copies a
 supported `sha256` fragment into the query so it can verify the body before
 committing a cached file. PyPI can return absolute, relative, or cross-host
 distribution URLs, so file rewrites are limited to configured allowed origins.
+
+## Optional private publishing
+
+Setting `publish_token_file` enables the Twine-compatible legacy upload
+endpoint. Basic authentication uses the token as the password (`__token__` is
+the conventional username); Bearer authentication is also accepted. Uploaded
+wheels, source archives, and zip distributions are stored below the repository
+data directory and exposed through PEP 503 HTML and PEP 691 JSON project pages.
+
+Publishing is disabled without a token file. Distribution filenames are
+immutable: every repeated upload receives HTTP 409. A private project shadows
+an upstream project with the same normalized name, preventing fallback-driven
+dependency confusion. This private-self-use feature intentionally has no
+users, RBAC, deletion, signing, scanning, replication, or Warehouse API.
+Private distribution bytes participate in the global storage quota and
+filesystem-reserve admission check. They are persistent artifacts and are not
+removed by cache TTL garbage collection.
 
 ## Resolved private-use decisions
 

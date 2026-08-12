@@ -5,10 +5,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -20,6 +22,7 @@ import (
 	"time"
 
 	"github.com/HN-Tran/n0ding/internal/cache"
+	"github.com/HN-Tran/n0ding/internal/storage"
 )
 
 func TestClientCancellationIsNotCountedAsRepositoryError(t *testing.T) {
@@ -390,6 +393,124 @@ func newTestProxy(t *testing.T, upstreamURL, fileOrigin string, forwardAuthoriza
 		Store:                store,
 		Logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
+}
+
+func TestPrivateUploadIsAuthenticatedImmutableAndInstallable(t *testing.T) {
+	upstream := httptest.NewServer(http.NotFoundHandler())
+	defer upstream.Close()
+	store, err := cache.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy, err := New(Options{
+		Name:          "pypi",
+		Path:          "/pypi/simple/",
+		Upstream:      upstream.URL + "/simple/",
+		PublicBaseURL: "http://packages.test",
+		TTL:           time.Hour,
+		PublishToken:  strings.Repeat("p", 32),
+		LocalPath:     t.TempDir(),
+		Store:         store,
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	upload := func(token string, content []byte) *httptest.ResponseRecorder {
+		var body bytes.Buffer
+		form := multipart.NewWriter(&body)
+		_ = form.WriteField("name", "Private_Demo")
+		_ = form.WriteField("requires_python", ">=3.11")
+		part, createErr := form.CreateFormFile("content", "private_demo-1.0.0-py3-none-any.whl")
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		_, _ = part.Write(content)
+		_ = form.Close()
+		request := httptest.NewRequest(http.MethodPost, "http://packages.test/pypi/legacy/", &body)
+		request.Header.Set("Content-Type", form.FormDataContentType())
+		if token != "" {
+			request.SetBasicAuth("__token__", token)
+		}
+		response := httptest.NewRecorder()
+		proxy.ServeHTTP(response, request)
+		return response
+	}
+
+	if response := upload("wrong", []byte("wheel-one")); response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized upload status = %d", response.Code)
+	}
+	if response := upload(strings.Repeat("p", 32), []byte("wheel-one")); response.Code != http.StatusCreated {
+		t.Fatalf("upload status = %d body=%s", response.Code, response.Body.String())
+	}
+	if response := upload(strings.Repeat("p", 32), []byte("wheel-two")); response.Code != http.StatusConflict {
+		t.Fatalf("overwrite status = %d, want 409", response.Code)
+	}
+
+	indexRequest := httptest.NewRequest(http.MethodGet, "http://packages.test/pypi/simple/private-demo/", nil)
+	indexRequest.Header.Set("Accept", "application/vnd.pypi.simple.v1+json")
+	indexResponse := httptest.NewRecorder()
+	proxy.ServeHTTP(indexResponse, indexRequest)
+	if indexResponse.Code != http.StatusOK || !strings.Contains(indexResponse.Body.String(), "private_demo-1.0.0-py3-none-any.whl") {
+		t.Fatalf("private index status=%d body=%s", indexResponse.Code, indexResponse.Body.String())
+	}
+	var index struct {
+		Files []struct {
+			URL string `json:"url"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(indexResponse.Body.Bytes(), &index); err != nil || len(index.Files) != 1 {
+		t.Fatalf("decode private index: files=%d err=%v", len(index.Files), err)
+	}
+	fileRequest := httptest.NewRequest(http.MethodGet, strings.Split(index.Files[0].URL, "#")[0], nil)
+	fileResponse := httptest.NewRecorder()
+	proxy.ServeHTTP(fileResponse, fileRequest)
+	if fileResponse.Code != http.StatusOK || fileResponse.Body.String() != "wheel-one" {
+		t.Fatalf("private file status=%d body=%q", fileResponse.Code, fileResponse.Body.String())
+	}
+}
+
+func TestPrivateUploadHonorsStorageQuota(t *testing.T) {
+	upstream := httptest.NewServer(http.NotFoundHandler())
+	defer upstream.Close()
+	store, err := cache.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy, err := New(Options{
+		Name:          "pypi",
+		Path:          "/pypi/simple/",
+		Upstream:      upstream.URL + "/simple/",
+		PublicBaseURL: "http://packages.test",
+		TTL:           time.Hour,
+		PublishToken:  strings.Repeat("p", 32),
+		LocalPath:     t.TempDir(),
+		Store:         store,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy.SetStorageController(storage.NewController(1, 0.9, 0.75, 0, 0))
+	proxy.freeBytes = func(string) (int64, error) { return 1 << 30, nil }
+
+	var body bytes.Buffer
+	form := multipart.NewWriter(&body)
+	_ = form.WriteField("name", "quota-demo")
+	part, err := form.CreateFormFile("content", "quota_demo-1.0.0-py3-none-any.whl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = part.Write([]byte("larger than quota"))
+	_ = form.Close()
+	request := httptest.NewRequest(http.MethodPost, "http://packages.test/pypi/legacy/", &body)
+	request.Header.Set("Content-Type", form.FormDataContentType())
+	request.SetBasicAuth("__token__", strings.Repeat("p", 32))
+	response := httptest.NewRecorder()
+	proxy.ServeHTTP(response, request)
+	if response.Code != http.StatusInsufficientStorage {
+		t.Fatalf("quota upload status = %d, want 507", response.Code)
+	}
 }
 
 func extractHref(t *testing.T, body string) string {

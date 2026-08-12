@@ -52,6 +52,7 @@ upstream = "https://pypi.org/simple"
 ttl = "24h"
 allowed_file_origins = "https://files.pythonhosted.org"
 forward_authorization = false
+# publish_token_file = "../secrets/pypi-publish-token"
 ```
 
 Validate a file without starting the listener:
@@ -142,6 +143,7 @@ The table name determines the repository name, such as `npm` in
 | `ttl` | `24h` | Freshness duration for cached responses |
 | `forward_authorization` | `false` | npm/PyPI opt-in for upstream credentials |
 | `allowed_file_origins` | empty | PyPI-only comma-separated HTTP(S) origins whose distribution files may be proxied and cached |
+| `publish_token_file` | empty | PyPI-only token file enabling immutable private uploads at `/pypi/legacy/` |
 
 When npm or PyPI `forward_authorization` is enabled, authenticated requests
 bypass the shared persistent cache. OCI has separate Registry V2 Bearer
@@ -159,6 +161,12 @@ configured `[repository.pypi]` path of `/pypi/simple/` therefore uses
 allowlisted to avoid turning the adapter into an open fetch proxy. When a link
 contains a `#sha256=...` fragment, the file body must match before n0ding
 commits it to cache.
+
+`publish_token_file` is resolved relative to the configuration file. The file
+must contain a 32-4096 byte token. Keep it outside source control and restrict
+its filesystem permissions. When configured, Twine can publish with
+`--repository-url <base>/pypi/legacy/ -u __token__ -p <token>`. Existing
+distribution filenames cannot be replaced.
 
 ## Credential and cache-safety behavior
 

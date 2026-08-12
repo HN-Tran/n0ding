@@ -162,7 +162,8 @@ the uninterrupted seven-day soak.
 - [ ] Test a private PyPI-compatible upstream only after the private-auth model
   is approved.
 
-PyPI publishing remains out of scope.
+PyPI publishing is an opt-in private-self-use capability and is not enabled in
+the public deployment profile.
 
 ## v0.1-private trust gate
 

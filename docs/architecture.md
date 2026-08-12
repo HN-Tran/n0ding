@@ -51,7 +51,8 @@ and blob `GET` responses are cached. Push methods remain disabled.
 The PyPI adapter implements the read-only Simple Repository API. It rewrites
 HTML and JSON project pages, proxies distribution files only from configured
 allowed origins, and verifies SHA-256 fragments before cache commit when the
-Simple page supplies them. Publishing methods remain disabled.
+Simple page supplies them. Publishing remains disabled unless a PyPI publish
+token file is explicitly configured.
 
 ## Components
 
@@ -188,13 +189,13 @@ unified auth layer exists.
 - `GET` and `HEAD` only
 - local filesystem storage only
 - one process; no distributed locking
-- no private publish path
+- no npm or OCI private publish path; PyPI publish is an opt-in self-use path
 - age-based retention only; no byte quota or LRU
 - npm/PyPI metadata rewrite limit of 64 MiB
 - OCI manifest limit of 16 MiB
 - SHA-256 OCI digests and PyPI fragments only
 - no OCI push, catalog, deletion, referrers, or signature policy
-- no PyPI publish, search, project-list mirroring, or administration API
+- no PyPI search, complete project-list mirroring, or administration API
 
 These are MVP boundaries.
 
@@ -208,5 +209,5 @@ real-client/TLS work remain ordered separately in the
 [v0.1-private roadmap](release-checklist.md).
 
 PyPI has a separate [design note](pypi-design.md) for implemented adapter
-decisions and remaining pip/uv evidence. Private publishing remains outside
+decisions and remaining pip/uv evidence. Multi-user private publishing remains outside
 the read-only architecture.

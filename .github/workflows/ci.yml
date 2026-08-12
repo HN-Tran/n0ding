@@ -201,6 +201,18 @@ jobs:
           test "$(sha256sum /tmp/pip-run-1/idna/__init__.py | cut -d' ' -f1)" = \
             "$(sha256sum /tmp/pip-run-2/idna/__init__.py | cut -d' ' -f1)"
 
+  private-pypi-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --disable-pip-version-check build twine uv
+      - name: Publish with Twine and install with pip and uv
+        run: ./tools/private-pypi-smoke.sh
+
   release-candidate-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 30
