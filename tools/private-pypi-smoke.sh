@@ -52,7 +52,8 @@ printf 'VALUE = "private-smoke-ok"\n' >"$workspace/package/src/n0ding_private_sm
 
 docker build --build-arg VERSION=private-pypi-smoke --tag n0ding:private-pypi-smoke .
 docker run -d --name "$container" \
-  --publish 127.0.0.1:18082:8080 \
+	--user "$(id -u):$(id -g)" \
+	--publish 127.0.0.1:18082:8080 \
   --volume "$workspace/n0ding.toml:/etc/n0ding/n0ding.toml:ro" \
   --volume "$workspace/publish-token:/run/secrets/pypi-publish-token:ro" \
   --volume "$workspace/data:/data" \
