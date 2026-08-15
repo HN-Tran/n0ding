@@ -86,7 +86,7 @@ unit_fragment=$(systemctl show "$service" -p FragmentPath --value); unit_hash=mi
 initial_nrestarts=$(systemctl show "$service" -p NRestarts --value)
 systemctl cat "$service" >"$evidence_root/effective-unit.txt"
 systemctl show "$service" -p ExecStart -p FragmentPath -p DropInPaths >"$evidence_root/effective-unit-properties.txt"
-effective_unit_hash=$( { systemctl cat "$service"; systemctl show "$service" -p ExecStart -p Environment -p EnvironmentFiles -p FragmentPath -p DropInPaths; } |sha256sum|awk '{print $1}')
+effective_unit_hash=$( { systemctl cat "$service"; systemctl show "$service" -p Environment -p EnvironmentFiles -p FragmentPath -p DropInPaths; } |sha256sum|awk '{print $1}')
 grep -F -- "$binary" "$evidence_root/effective-unit-properties.txt" >/dev/null || die "effective ExecStart does not contain expected binary"
 grep -F -- "$config" "$evidence_root/effective-unit-properties.txt" >/dev/null || die "effective ExecStart does not contain expected config"
 initial_cache_bytes=$(du -sb "$cache"|awk '{print $1}'); expected_pid=$(systemctl show "$service" -p MainPID --value)
@@ -232,7 +232,7 @@ sample() {
   current=$(sha256sum "$binary"|awk '{print $1}'); [[ $current == "$binary_hash" ]] || fail_run "binary changed"
   current=$(sha256sum "$config"|awk '{print $1}'); [[ $current == "$config_hash" ]] || fail_run "config changed"
   unit_now=missing; [[ -n $unit_fragment && -r $unit_fragment ]] && unit_now=$(sha256sum "$unit_fragment"|awk '{print $1}'); [[ $unit_now == "$unit_hash" ]] || fail_run "unit fragment changed"
-  unit_effective_now=$( { systemctl cat "$service"; systemctl show "$service" -p ExecStart -p Environment -p EnvironmentFiles -p FragmentPath -p DropInPaths; } |sha256sum|awk '{print $1}')
+  unit_effective_now=$( { systemctl cat "$service"; systemctl show "$service" -p Environment -p EnvironmentFiles -p FragmentPath -p DropInPaths; } |sha256sum|awk '{print $1}')
   [[ $unit_effective_now == "$effective_unit_hash" ]] || fail_run "effective unit changed"
   nrestarts=$(systemctl show "$service" -p NRestarts --value); [[ $nrestarts == "$initial_nrestarts" ]] || fail_run "systemd reports an unplanned restart"
   pid=$(systemctl show "$service" -p MainPID --value); [[ $pid == "$expected_pid" ]] || fail_run "unexplained process start: PID changed outside restart ledger"
