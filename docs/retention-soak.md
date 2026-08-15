@@ -3,7 +3,7 @@
 Status: infrastructure implemented and deterministic smoke passed on
 2026-07-26. A seven-day run has **not** been performed. For `v0.1.0` Public
 Preview only, the release gate uses the separate
-[native 72-hour real-use validation](native-public-preview-validation.md).
+[native focused real-client validation](native-public-preview-validation.md).
 This document remains the future stable and availability hardening gate.
 
 The soak exercises the existing production cache, GC, restart, status, metrics,

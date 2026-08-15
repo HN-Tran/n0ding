@@ -12,3 +12,5 @@
 .DS_Store
 .env
 Thumbs.db
+__pycache__/
+*.py[cod]

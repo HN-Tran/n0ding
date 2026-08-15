@@ -54,11 +54,12 @@ All notable changes to n0ding are documented in this file. The project follows
   with concurrent npm/OCI fixtures, mixed identities, client cancellation,
   forced restart/expiry, disk measurements, integrity checks, and artifact
   canary scanning.
-- Added a native Linux/systemd 72-hour real-use gate for the `v0.1.0` Public
-  Preview, including exact-candidate/config invariants, five-minute evidence,
-  six-hour restarts, capacity and process monitoring, canary scans, and
-  explicit abort/rollback hooks. The isolated seven-day profile remains the
-  future stable/availability hardening gate.
+- Added a native Linux/systemd focused real-client gate for the `v0.1.0`
+  Public Preview: complete cold/warm/post-restart mixed npm/pip/uv/Docker
+  phases, one restart, concurrency, cancellation/retry evidence, exact-candidate
+  invariants, resource monitoring, optional canary scans, and explicit abort/rollback
+  hooks. It has no elapsed-time pass criterion. The isolated seven-day profile
+  remains the future stable/availability hardening gate.
 
 ### Documentation
 
@@ -75,7 +76,7 @@ All notable changes to n0ding are documented in this file. The project follows
   handling, and the explicit rule that a smoke run is not seven-day evidence.
 - Documented safe native RC migration, off-host stopped backup, versioned
   binary switching, fresh-cache rollback boundaries, and real-client
-  acceptance for the 72-hour Public Preview gate.
+  acceptance for the focused Public Preview gate.
 - Recorded the earlier conditional age-only-retention decision, the subsequent
   logical byte-budget design, disk-capacity guardrails, and the remaining
   whole-filesystem disk-full risk.

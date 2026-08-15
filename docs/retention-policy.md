@@ -34,7 +34,7 @@ Operators must still:
   rate rather than accepting `720h` blindly;
 - keep external disk alerts and a dedicated volume where practical.
 
-The native 72-hour exact-RC observation and a recorded capacity/alert drill
+The native focused exact-RC client matrix and a recorded capacity/alert drill
 remain `v0.1.0` Public Preview gates because metadata, temporary files,
 filesystem allocation overhead, and unrelated volume users are outside the
 logical object budget. The real seven-day soak remains the later

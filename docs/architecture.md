@@ -209,7 +209,7 @@ These are MVP boundaries.
 
 The short retention/concurrency smoke, stopped recovery drill, and retention
 policy decision are complete. The `v0.1.0` Public Preview gate is the exact-RC
-native 72-hour real-use validation plus deployment-specific capacity evidence.
+native focused cold/warm/post-restart real-client validation plus deployment-specific capacity evidence.
 The uninterrupted seven-day run remains a later stable/availability gate. Real private-provider and
 real-client/TLS work remain ordered separately in the
 [v0.1-private roadmap](release-checklist.md).

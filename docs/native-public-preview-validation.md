@@ -1,125 +1,85 @@
-# Native 72-hour public-preview validation
+# Native focused Public Preview validation
 
-The `v0.1.0` Public Preview uses a 72-hour real-use observation of the exact
-release-candidate SHA. This narrower gate is suitable for a best-effort
-preview, not a production-availability claim. The isolated seven-day
-Docker/PowerShell soak remains the gate before a later stable or
-production-ready claim.
+The `v0.1.0` Public Preview uses an event- and coverage-based real-client gate
+on the exact release-candidate SHA. It is not an uptime test. The isolated
+seven-day Docker/PowerShell soak remains the gate for a later stable,
+production-ready, or availability-oriented claim.
 
-## Safe migration
+## Safe deployment
 
-Prefer a fresh RC cache path. Keep the old cache and immutable old binary as a
-rollback boundary; never merge cache trees or restore over a live/non-empty
-cache.
+Use a fresh RC cache and preferably a side-by-side systemd service. Preserve
+the old cache, immutable binary, config, unit, and off-host backup as rollback
+boundaries. Record hashes, status, metrics, journal, capacity, cache size,
+limits, and `NRestarts` before starting. Never merge cache trees or restore
+over a live cache.
 
-1. Record the old version, binary/config/unit hashes, systemd status and
-   `NRestarts`, status, metrics, journal, capacity, and cache size.
-2. Briefly stop n0ding and stream a consistent backup off-host:
+## Required coverage
 
-   ```sh
-   ssh root@host 'set -e; systemctl stop n0ding; trap "systemctl start n0ding" EXIT; tar -C / -cf - var/lib/n0ding etc/n0ding' >n0ding-pre-rc.tar
-   sha256sum n0ding-pre-rc.tar >n0ding-pre-rc.tar.sha256
-   ```
+Run exactly three complete mixed-client phases:
 
-3. Build with the full commit as version, transfer under a versioned filename,
-   verify its checksum, and validate configuration.
-4. Make `ExecStart` use a stable symlink, with immutable binaries beside it.
-   The helper requires this layout and atomically switches the binary. Its
-   rollback is **binary-only**: it does not restore config, unit files, or
-   cache data, which must remain separate and externally backed up:
+1. cold server cache with fresh client caches;
+2. warm server cache with new, empty client caches;
+3. one planned service restart, then new client caches and post-restart use.
 
-   ```sh
-   sudo tools/prepare-native-preview.sh preflight --service n0ding \
-     --binary /usr/local/lib/n0ding/current --config /etc/n0ding/n0ding.toml \
-     --cache /var/lib/n0ding-preview --expected-sha 81036ff0e284577c4186cb0b68ae3e768450160b
-   sudo tools/prepare-native-preview.sh switch --service n0ding \
-     --binary /usr/local/lib/n0ding/current \
-     --candidate /usr/local/lib/n0ding/n0ding-81036ff0e284577c4186cb0b68ae3e768450160b \
-     --config /etc/n0ding/n0ding.toml --cache /var/lib/n0ding-preview \
-     --expected-sha 81036ff0e284577c4186cb0b68ae3e768450160b
-   ```
+Every phase runs real npm, pip, uv, and Docker clients concurrently. Use fixed
+fixtures such as `testdata/npm-compat`, `idna==3.10`, and fixed Docker Hub
+tags. Raw OCI requests may supplement but cannot replace a real Docker pull.
+The evidence must show npm SRI/install integrity, matching pip and uv installed
+file hashes, identical OCI RepoDigests, and positive warm/post-restart cache-
+hit deltas.
 
-Retain old cache, binary, backup, hashes, and deployment state until acceptance.
-Restore only into a separate empty path.
+The workload hook receives base URL, snapshot directory, evidence root,
+one-based round, and phase. It appends one receipt per client invocation to
+`workload-events.jsonl`. Each receipt binds round/phase, ecosystem, client and
+version, fresh client-cache identity, start/end epoch milliseconds, exit code,
+output artifact and SHA-256, integrity algorithm/value, and before/after cache
+hits. Post-restart receipts additionally bind the runner restart-ledger index,
+PID, and process-start value. Client intervals must overlap in every phase.
 
-## Real clients and observation
+The hook also appends an ordered cancellation attempt and successful retry,
+each with output and before/after metrics artifacts plus SHA-256. The canceled
+cacheable transfer must leave no committed partial, persistent temp, orphan,
+or corrupt object. Synthetic DNS disruption is not a Public Preview gate.
 
-Run each client cold, warm with a new client-side cache, and after restart.
-Preserve outputs, versions, before/after metrics, and hashes:
+The repository validates the hook contract but cannot supply the deployment-
+specific Docker endpoint. The adapter must be reviewed with the final host
+configuration and must identify a reachable real Docker Engine; without that
+endpoint the focused gate cannot qualify.
 
-- npm: `npm view @types/node@22.10.0` plus `npm ci --ignore-scripts
-  --no-audit --no-fund` using `testdata/npm-compat` and `<url>/npm/`;
-- pip and uv: separate empty caches/targets installing `idna==3.10` through
-  `<url>/pypi/simple/`, with matching installed-file hashes;
-- OCI: a reachable real Docker Engine pulls `alpine:3.20`,
-  `nginx:1.27-alpine`, and `busybox:1.36` twice through n0ding, removes local
-  client copies between passes, and observes identical repo digests.
-
-Raw registry requests can additionally verify manifest negotiation and blob
-SHA-256 values, but do not replace the real Docker run. Exercise one canceled
-large transfer and require no committed partial or persistent temp file.
-
-The workload hook receives the base URL, snapshot directory, and evidence
-root. It
-must be non-destructive and save only secret-free output. Put fake canaries in
-a root-readable file outside cache and evidence paths.
+## Running the gate
 
 ```sh
-sudo tools/native-preview-soak.sh --service n0ding \
-  --mode gate \
-  --expected-version 81036ff0e284577c4186cb0b68ae3e768450160b \
+sudo tools/native-preview-gate.sh --service n0ding-preview \
+  --mode gate --rounds 3 --planned-restarts 1 --round-budget 2400 \
+  --expected-version <full-rc-sha> \
   --expected-binary-sha256 <trusted-sha256> \
-  --binary /usr/local/lib/n0ding/current --config /etc/n0ding/n0ding.toml \
+  --binary /usr/local/lib/n0ding-preview/current \
+  --config /etc/n0ding/preview.toml \
   --cache /var/lib/n0ding-preview --forbidden-old-cache /var/lib/n0ding \
-  --evidence /var/lib/n0ding-evidence/rc-81036ff-72h \
-  --workload-hook /root/n0ding-real-use-hook --canary-file /root/n0ding-preview-canaries \
-  --anchor-hook /root/copy-evidence-manifest-off-host \
+  --evidence /var/lib/n0ding-evidence/<rc>-focused \
+  --workload-hook /root/n0ding-focused-client-hook \
   --max-rss-kib 262144 --max-fds 1024 \
-  --max-cache-growth-bytes 3221225472 --max-temp-files 0
+  --max-cache-growth-bytes 1073741824 --max-temp-files 0
 ```
 
-Gate mode refuses durations below 259,200 seconds and requires the workload,
-canary, anchor, and resource-bound inputs above. Short development runs must
-use `--mode smoke`; their result is explicitly `nonqualifying-smoke`.
-Every five minutes the runner captures health, status, metrics, effective
-systemd unit/drop-ins/environment,
-journal, RSS, file descriptors, cache usage, temp files, and capacity. It
-checks exact version and immutable binary/config/unit hashes, restarts every
-six hours, atomically replaces `progress.json`, and produces `result.json`
-plus evidence hashes. The anchor hook must copy the supplied pre-anchor
-manifest off-host. It receives the manifest SHA-256 as its third argument and
-must write `anchor-receipt.json` containing that exact value as
-`preanchor_sha256` and `"copied_off_host": true`. The manifest includes the
-stopped cache content hashes. A failed run
-cannot be resumed into a pass. Abort and
-rollback hooks run only when explicitly supplied.
+There is no minimum elapsed time. `--round-budget` is checked after each round
+and `--hook-timeout` is a hard per-hook bound; neither is a pass duration.
+Gate mode requires exactly three phases and one restart;
+smaller smoke runs are always non-qualifying. The runner verifies exact binary,
+config, unit, PID ledger, trusted-input hashes and permissions, health, status,
+metrics, disk, cache, RSS, file descriptors, temp files, journal, and canaries
+when configured. It checks resources again after every hook.
 
-The workload hook maintains `workload-summary.json` in the evidence root.
-Its `ecosystems` object must contain `npm`, `pip`, `uv`, and `oci`;
-each has integer `cold`, `warm`, and `post_restart` counts of at least
-one plus `"integrity_pass": true`. Gate mode rejects a missing or incomplete
-summary. The runner hashes hook and canary-definition files without copying or
-printing canary values.
-Review every hook, keep it root-owned and non-writable by other users, and
-prove it with a nonqualifying smoke before starting the gate.
+The runner copies the prior event log before each hook and rejects rewriting,
+truncation, or a call that appends nothing. The committed validator derives
+coverage directly from receipts and rejects aggregate claims, missing,
+duplicate, extra, wrong-phase, non-overlapping, hash-mismatched, changed-
+integrity, hitless warm/post-restart, or forged-restart evidence.
 
-## Gates
+At completion the service is stopped for a cache-body hash, metadata/body,
+OCI-digest, temp, orphan, and optional canary scan, then returned to its prior
+active state. Optional off-host anchoring binds the final manifest. A failed
+run cannot be resumed into a pass.
 
-Pass requires at least 259,200 seconds and 12 ledgered planned restarts; the
-same candidate checksum, config, effective unit, and dedicated cache location;
-successful cold/warm/post-restart clients;
-matching SRI, installed hashes, and OCI digests; health recovery; bounded RSS,
-FD, cache and temp growth within explicit bounds; at least 10% and 2 GiB free
-space throughout; no unplanned process start,
-panic, integrity error, canary finding, stale temp/orphan accumulation, or
-unexplained server error; and a stopped final cache content manifest with
-per-body hashes and integrity review. The anchor proves this evidence was
-copied off-host; the runner does not claim a complete external cache archive.
-
-Any integrity mismatch, corrupt metadata/body pair, unexpected restart, panic,
-persistent unexplained 5xx, growing temp/orphan set, invariant change, or less
-than 10% or 2 GiB free space fails the gate. At completion the runner stops the
-service, scans complete body/metadata pairs, OCI digests, temps, orphans, and
-canaries, records a quiesced listing, then restores the prior active state.
-Pause workload after two health failures.
-Preserve evidence before rollback or remediation.
+Passing supports only the documented best-effort Public Preview. It does not
+establish long-duration stability, production readiness, or availability.

@@ -215,9 +215,10 @@ pass/fail criteria, artifacts, and cleanup behavior are in the
 [retention/concurrency soak guide](retention-soak.md).
 
 The `v0.1.0` best-effort Public Preview instead requires the exact candidate to
-pass the [native 72-hour real-use validation](native-public-preview-validation.md).
-That systemd-oriented gate records real npm, pip, uv, and Docker use without
-misrepresenting a shorter run as seven-day evidence.
+pass the [native focused real-client validation](native-public-preview-validation.md).
+That systemd-oriented gate records complete cold, warm, and post-restart mixed
+npm, pip, uv, and Docker phases, one restart, and cancellation/retry. Elapsed time is
+not an acceptance criterion and the result is not seven-day evidence.
 
 ## Disk capacity, byte budget, and retention
 
@@ -269,7 +270,7 @@ requirements for a future strict aggregate limit are in the
   monitoring and capacity planning remain required.
 - There is no multi-process or shared-volume locking.
 - Only local filesystem storage is supported.
-- The deterministic retention smoke has passed. The native 72-hour exact-RC
-  observation and per-deployment capacity/risk acceptance remain open for the
+- The deterministic retention smoke has passed. The native focused exact-RC
+  client matrix and per-deployment capacity/risk acceptance remain open for the
   Public Preview; the uninterrupted seven-day soak remains a later
   stable/availability gate.

@@ -24,6 +24,11 @@ jobs:
           cache: true
       - run: go test -race ./...
       - run: go vet ./...
+      - name: Validate focused Public Preview gate
+        run: |
+          bash -n tools/native-preview-gate.sh
+          python3 tools/test-native-preview-workload.py
+          sudo bash tools/test-native-preview-gate.sh
       - run: go build -trimpath -ldflags="-s -w -X main.version=ci" -o dist/n0ding ./cmd/n0ding
       - run: ./dist/n0ding -config config/n0ding.local.toml -check-config
 

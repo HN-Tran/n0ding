@@ -97,8 +97,10 @@ revocation or token-lifetime evidence.
 - [x] Pass the short smoke with concurrent npm/OCI clients, mixed identities,
   a canceled download, forced process termination/restart, forced expiry,
   disk/status/metrics evidence, cache-pair validation, and canary scanning.
-- [ ] Run the exact-RC native 72-hour Public Preview validation with real npm,
-  pip, uv, and Docker clients, planned restarts, and durable host evidence.
+- [ ] Run the exact-RC focused Public Preview validation: complete cold, warm,
+  and post-restart phases with real npm, pip, uv, and Docker clients, one
+  planned restart, concurrency, cancellation/retry, integrity, and durable
+  host evidence.
 - [ ] Before a later stable/availability claim, run the isolated seven-day soak
   with concurrent clients, forced expiry, restarts, and disk evidence.
 - [x] Confirm no corrupt complete objects after forced client disconnects and
@@ -109,7 +111,7 @@ revocation or token-lifetime evidence.
 - [x] Record restore duration, failure handling, and rollback procedure.
 - [x] Implement a shared `max_bytes` budget, admission reservations,
   high/low-watermark pressure GC, LRU ordering, and filesystem headroom.
-- [ ] Close the Public Preview capacity gate after the native 72-hour run by
+- [ ] Close the Public Preview capacity gate after the focused client run by
   recording volume capacity, alert thresholds, and growth headroom.
 
 The deterministic [stopped Compose backup/restore drill](backup-restore-drill.md)
