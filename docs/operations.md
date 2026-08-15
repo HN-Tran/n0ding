@@ -200,8 +200,8 @@ identity policy:
 .\tools\retention-soak.ps1 -Mode Smoke
 ```
 
-Start the actual seven-day private gate only on a host that can remain
-available for the full interval:
+Start the seven-day stable/availability hardening gate only on a host that can
+remain available for the full interval:
 
 ```powershell
 .\tools\retention-soak.ps1 -Mode SevenDay
@@ -213,6 +213,11 @@ credentials, and unique local image tags. It preserves evidence under
 Do not treat a short or resumed run as seven-day evidence. Exact profiles,
 pass/fail criteria, artifacts, and cleanup behavior are in the
 [retention/concurrency soak guide](retention-soak.md).
+
+The `v0.1.0` best-effort Public Preview instead requires the exact candidate to
+pass the [native 72-hour real-use validation](native-public-preview-validation.md).
+That systemd-oriented gate records real npm, pip, uv, and Docker use without
+misrepresenting a shorter run as seven-day evidence.
 
 ## Disk capacity, byte budget, and retention
 
@@ -264,5 +269,7 @@ requirements for a future strict aggregate limit are in the
   monitoring and capacity planning remain required.
 - There is no multi-process or shared-volume locking.
 - Only local filesystem storage is supported.
-- The deterministic retention smoke has passed; the uninterrupted seven-day
-  soak and per-deployment disk-capacity/risk-acceptance gate remain open.
+- The deterministic retention smoke has passed. The native 72-hour exact-RC
+  observation and per-deployment capacity/risk acceptance remain open for the
+  Public Preview; the uninterrupted seven-day soak remains a later
+  stable/availability gate.

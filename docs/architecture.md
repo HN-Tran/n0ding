@@ -208,9 +208,9 @@ These are MVP boundaries.
 ## Next architecture gate
 
 The short retention/concurrency smoke, stopped recovery drill, and retention
-policy decision are complete. The next retention gate is one uninterrupted
-seven-day run followed by deployment-specific disk-capacity evidence and
-explicit acceptance of the missing byte quota. Real private-provider and
+policy decision are complete. The `v0.1.0` Public Preview gate is the exact-RC
+native 72-hour real-use validation plus deployment-specific capacity evidence.
+The uninterrupted seven-day run remains a later stable/availability gate. Real private-provider and
 real-client/TLS work remain ordered separately in the
 [v0.1-private roadmap](release-checklist.md).
 

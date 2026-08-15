@@ -97,8 +97,10 @@ revocation or token-lifetime evidence.
 - [x] Pass the short smoke with concurrent npm/OCI clients, mixed identities,
   a canceled download, forced process termination/restart, forced expiry,
   disk/status/metrics evidence, cache-pair validation, and canary scanning.
-- [ ] Run a seven-day soak with concurrent npm and OCI clients, forced expiry,
-  process restarts, and disk-usage evidence.
+- [ ] Run the exact-RC native 72-hour Public Preview validation with real npm,
+  pip, uv, and Docker clients, planned restarts, and durable host evidence.
+- [ ] Before a later stable/availability claim, run the isolated seven-day soak
+  with concurrent clients, forced expiry, restarts, and disk evidence.
 - [x] Confirm no corrupt complete objects after forced client disconnects and
   process termination.
 - [x] Back up a stopped Compose cache and config.
@@ -107,9 +109,8 @@ revocation or token-lifetime evidence.
 - [x] Record restore duration, failure handling, and rollback procedure.
 - [x] Implement a shared `max_bytes` budget, admission reservations,
   high/low-watermark pressure GC, LRU ordering, and filesystem headroom.
-- [ ] Close the disk-capacity gate after the real seven-day soak by recording
-  the intended deployment's volume capacity, alert thresholds, and growth
-  headroom.
+- [ ] Close the Public Preview capacity gate after the native 72-hour run by
+  recording volume capacity, alert thresholds, and growth headroom.
 
 The deterministic [stopped Compose backup/restore drill](backup-restore-drill.md)
 also proves restored identity checks, archive/restored-state canary scanning,
@@ -130,7 +131,7 @@ observed ingress, backup/restore validation, canary-scan references,
 status/metrics checks, safe shutdown/restart commands, rollback steps, and
 explicit unsupported-use warnings.
 
-Passing that checklist does not close the full `v0.1` trust gate. It does not
+Passing that checklist does not close the later stable/private trust gate. It does not
 prove real private-provider credentials, every supported TLS client matrix, or
 the uninterrupted seven-day soak.
 
