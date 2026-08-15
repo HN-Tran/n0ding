@@ -22,13 +22,14 @@ import (
 )
 
 type Store struct {
-	root       string
-	now        func() time.Time
-	mu         sync.RWMutex
-	bytes      atomic.Int64
-	objects    atomic.Int64
-	controller *storage.Controller
-	freeBytes  func(string) (int64, error)
+	root        string
+	now         func() time.Time
+	mu          sync.RWMutex
+	bytes       atomic.Int64
+	objects     atomic.Int64
+	controller  *storage.Controller
+	freeBytes   func(string) (int64, error)
+	activeTemps map[string]struct{}
 }
 
 func (s *Store) SetController(controller *storage.Controller) {
@@ -87,7 +88,7 @@ func New(root string) (*Store, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("create cache directory: %w", err)
 	}
-	store := &Store{root: root, now: time.Now}
+	store := &Store{root: root, now: time.Now, activeTemps: make(map[string]struct{})}
 	if _, _, err := store.Reconcile(); err != nil {
 		return nil, fmt.Errorf("scan cache directory: %w", err)
 	}
@@ -256,11 +257,21 @@ func (s *Store) PutStreamVerified(
 		return fmt.Errorf("create cache shard: %w", err)
 	}
 
+	s.mu.Lock()
 	bodyTemp, err := os.CreateTemp(directory, ".body-*")
+	if err == nil {
+		s.activeTemps[bodyTemp.Name()] = struct{}{}
+	}
+	s.mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("create cache body: %w", err)
 	}
 	bodyTempPath := bodyTemp.Name()
+	defer func() {
+		s.mu.Lock()
+		delete(s.activeTemps, bodyTempPath)
+		s.mu.Unlock()
+	}()
 	generationPath := bodyPath + "." + strings.TrimPrefix(filepath.Base(bodyTempPath), ".body-")
 	keepBody := false
 	defer func() {
@@ -303,11 +314,21 @@ func (s *Store) PutStreamVerified(
 	if err != nil {
 		return fmt.Errorf("encode cache metadata: %w", err)
 	}
+	s.mu.Lock()
 	metadataTemp, err := os.CreateTemp(directory, ".metadata-*")
+	if err == nil {
+		s.activeTemps[metadataTemp.Name()] = struct{}{}
+	}
+	s.mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("create cache metadata: %w", err)
 	}
 	metadataTempPath := metadataTemp.Name()
+	defer func() {
+		s.mu.Lock()
+		delete(s.activeTemps, metadataTempPath)
+		s.mu.Unlock()
+	}()
 	keepMetadata := false
 	defer func() {
 		_ = metadataTemp.Close()
@@ -460,6 +481,9 @@ func (s *Store) CleanupStaleTemps(maxAge time.Duration) (result TempCleanupResul
 			return walkErr
 		}
 		if entry.IsDir() || !isTempName(entry.Name()) {
+			return nil
+		}
+		if _, active := s.activeTemps[path]; active {
 			return nil
 		}
 		info, infoErr := entry.Info()

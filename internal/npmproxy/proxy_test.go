@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/HN-Tran/n0ding/internal/cache"
+	"github.com/HN-Tran/n0ding/internal/storage"
 )
 
 func TestClientCancellationIsNotCountedAsRepositoryError(t *testing.T) {
@@ -119,6 +120,51 @@ func TestProxyCachesTarball(t *testing.T) {
 	}
 	if requests.Load() != 1 {
 		t.Fatalf("upstream requests = %d", requests.Load())
+	}
+}
+
+func TestUnknownLengthTarballBypassesCacheAndReportsStorageCounters(t *testing.T) {
+	var requests atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests.Add(1)
+		writer.Header().Set("Content-Type", "application/octet-stream")
+		writer.(http.Flusher).Flush()
+		_, _ = writer.Write([]byte("chunked package bytes"))
+	}))
+	defer upstream.Close()
+
+	store, err := cache.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := storage.NewController(1_000, 0.9, 0.75, 0, 0)
+	store.SetController(controller)
+	proxy, err := New(Options{
+		Name: "npm", Path: "/npm/", Upstream: upstream.URL,
+		PublicBaseURL: "http://packages.test", TTL: time.Hour, Store: store,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		response := httptest.NewRecorder()
+		proxy.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://n0ding.test/npm/pkg/-/pkg.tgz", nil))
+		if response.Code != http.StatusOK || response.Body.String() != "chunked package bytes" {
+			t.Fatalf("attempt %d status=%d body=%q", attempt, response.Code, response.Body.String())
+		}
+		if got := response.Header().Get("X-N0ding-Cache"); got != "MISS" {
+			t.Fatalf("attempt %d cache=%q", attempt, got)
+		}
+	}
+	if requests.Load() != 2 {
+		t.Fatalf("upstream requests=%d, want 2", requests.Load())
+	}
+	if snapshot := controller.Snapshot(); snapshot.BypassObjects != 2 || snapshot.BypassBytes != 0 || snapshot.ReservedBytes != 0 {
+		t.Fatalf("storage snapshot=%#v", snapshot)
+	}
+	if snapshot := proxy.Snapshot(); snapshot.CacheObjects != 0 || snapshot.StorageBytes != 0 || snapshot.CacheMisses != 2 {
+		t.Fatalf("repository snapshot=%#v", snapshot)
 	}
 }
 

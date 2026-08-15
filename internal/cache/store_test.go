@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -181,6 +182,32 @@ func TestQuotaBypassesUnknownLengthWithoutWritingTemp(t *testing.T) {
 	if _, found, err := store.Lookup("unknown", time.Hour); err != nil || found {
 		t.Fatalf("unknown length cached: found=%v err=%v", found, err)
 	}
+	if snapshot := controller.Snapshot(); snapshot.BypassObjects != 1 || snapshot.BypassBytes != 0 || snapshot.ReservedBytes != 0 {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	assertNoTemps(t, store.root)
+}
+
+func TestQuotaEnforcesInjectedFilesystemReserveWithoutWritingTemp(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := storage.NewController(1_000, 0.9, 0.75, 100, 0)
+	store.SetController(controller)
+	store.freeBytes = func(string) (int64, error) { return 105, nil }
+	metadata := Metadata{Status: http.StatusOK, Header: http.Header{"Content-Length": []string{"6"}}}
+	var downstream bytes.Buffer
+	if err := store.PutStream("free-space-bypass", metadata, strings.NewReader("123456"), &downstream); err != nil {
+		t.Fatal(err)
+	}
+	if downstream.String() != "123456" {
+		t.Fatalf("downstream = %q", downstream.String())
+	}
+	if snapshot := controller.Snapshot(); snapshot.BypassObjects != 1 || snapshot.BypassBytes != 6 || snapshot.ReservedBytes != 0 {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	assertNoTemps(t, store.root)
 }
 
 func TestQuotaDiscardsUnderstatedBodyButCompletesDownstream(t *testing.T) {
@@ -413,6 +440,9 @@ func TestCanceledDownstreamLeavesNoCompleteOrTemporaryObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	controller := storage.NewController(1_000, 0.9, 0.75, 0, 0)
+	store.SetController(controller)
+	store.freeBytes = func(string) (int64, error) { return 10_000, nil }
 	downstreamErr := errors.New("client canceled")
 	downstream := &failAfterWriter{
 		remaining: 4,
@@ -420,7 +450,7 @@ func TestCanceledDownstreamLeavesNoCompleteOrTemporaryObject(t *testing.T) {
 	}
 	err = store.PutStream(
 		"canceled-download",
-		Metadata{Status: http.StatusOK},
+		Metadata{Status: http.StatusOK, Header: http.Header{"Content-Length": []string{"24"}}},
 		bytes.NewReader([]byte("incomplete response body")),
 		downstream,
 	)
@@ -437,7 +467,55 @@ func TestCanceledDownstreamLeavesNoCompleteOrTemporaryObject(t *testing.T) {
 	if bytes != 0 || objects != 0 {
 		t.Fatalf("canceled stream counted as complete: bytes=%d objects=%d", bytes, objects)
 	}
-	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+	if snapshot := controller.Snapshot(); snapshot.ReservedBytes != 0 || snapshot.CommittedBytes != 0 {
+		t.Fatalf("reservation leaked after cancellation: %#v", snapshot)
+	}
+	assertNoTemps(t, root)
+}
+
+func TestCleanupStaleTempsProtectsActiveDownload(t *testing.T) {
+	root := t.TempDir()
+	store, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.now = func() time.Time { return time.Now().Add(24 * time.Hour) }
+	controller := storage.NewController(1_000, 0.9, 0.75, 0, 0)
+	store.SetController(controller)
+	store.freeBytes = func(string) (int64, error) { return 10_000, nil }
+
+	reader := &blockingReader{started: make(chan struct{}), release: make(chan struct{}), body: []byte("active")}
+	done := make(chan error, 1)
+	go func() {
+		done <- store.PutStream(
+			"active-download",
+			Metadata{Status: http.StatusOK, Header: http.Header{"Content-Length": []string{"6"}}},
+			reader,
+			io.Discard,
+		)
+	}()
+	<-reader.started
+	result, err := store.CleanupStaleTemps(time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Files != 0 {
+		t.Fatalf("cleanup removed active temp: %#v", result)
+	}
+	close(reader.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	entry, found, err := store.Lookup("active-download", time.Hour)
+	if err != nil || !found {
+		t.Fatalf("completed active download found=%v err=%v", found, err)
+	}
+	_ = entry.Close()
+}
+
+func assertNoTemps(t *testing.T, root string) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -449,6 +527,26 @@ func TestCanceledDownstreamLeavesNoCompleteOrTemporaryObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+type blockingReader struct {
+	started chan struct{}
+	release chan struct{}
+	body    []byte
+	once    sync.Once
+}
+
+func (reader *blockingReader) Read(target []byte) (int, error) {
+	reader.once.Do(func() {
+		close(reader.started)
+		<-reader.release
+	})
+	if len(reader.body) == 0 {
+		return 0, io.EOF
+	}
+	written := copy(target, reader.body)
+	reader.body = reader.body[written:]
+	return written, nil
 }
 
 func TestRestoredIncompleteOrCorruptObjectsAreNeverCountedAsComplete(t *testing.T) {
