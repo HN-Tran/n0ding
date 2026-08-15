@@ -23,7 +23,8 @@ curl http://localhost:8080/healthz
 curl http://localhost:8080/api/v1/status
 ```
 
-The Compose project uses a named volume mounted at `/data`. A normal
+The root source-build Compose file publishes only on `127.0.0.1:8080` by
+default. The project uses a named volume mounted at `/data`. A normal
 `docker compose down` removes containers and the project network but preserves
 that named volume. `docker compose down --volumes` deletes the cache.
 
@@ -40,12 +41,18 @@ $env:N0DING_PUBLIC_URL = "https://packages.example.com"
 docker compose up --build -d
 ```
 
+For access from a trusted private network, an operator may explicitly set
+`N0DING_BIND_ADDRESS` to the required host address. This bypasses the safe
+loopback default; n0ding has no built-in client authentication or RBAC. For an
+internet-reachable host, do not publish this source-build service directly:
+use the [authenticated public VPS profile](public-vps.md).
+
 ## TLS and reverse proxy
 
 n0ding serves HTTP itself. Terminate TLS at a trusted reverse proxy and keep
-port 8080 on a private network or loopback interface. The proxy must preserve
-the request method, path, query, `Authorization`, `Accept`, `Range`, and
-`WWW-Authenticate` response headers.
+port 8080 on loopback (preferred) or a trusted private network. The proxy must
+preserve the request method, path, query, `Authorization`, `Accept`, `Range`,
+and `WWW-Authenticate` response headers.
 
 A minimal Caddyfile is:
 

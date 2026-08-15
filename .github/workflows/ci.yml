@@ -32,7 +32,17 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
-      - run: docker compose config --quiet
+      - name: Validate source Compose defaults to loopback
+        run: |
+          set -euo pipefail
+          docker compose config --quiet
+          docker compose config --format json | python3 -c '
+          import json, sys
+          config = json.load(sys.stdin)
+          ports = config["services"]["n0ding"].get("ports", [])
+          if not ports or any(port.get("host_ip") != "127.0.0.1" for port in ports):
+              raise SystemExit(f"source Compose must publish only to loopback by default: {ports!r}")
+          '
       - run: docker compose -f deploy/compose.yaml config --quiet
       - run: docker build --build-arg VERSION=ci --tag n0ding:ci .
       - name: Validate authenticated public deployment

@@ -123,10 +123,10 @@ curl.exe http://localhost:8080/healthz
 curl.exe http://localhost:8080/api/v1/status
 ```
 
-The service listens on `http://localhost:8080` and stores its cache in the
-named `n0ding-data` volume. A normal `docker compose down` preserves that
-volume. Do not add `--volumes` unless you intentionally want to delete the
-cache.
+The source-build Compose file publishes the service only on
+`127.0.0.1:8080` by default and stores its cache in the named `n0ding-data`
+volume. A normal `docker compose down` preserves that volume. Do not add
+`--volumes` unless you intentionally want to delete the cache.
 
 For a hostname or TLS reverse proxy, set `N0DING_PUBLIC_URL` before starting
 Compose. It must be the exact URL clients use:
@@ -144,8 +144,10 @@ docker compose up --build -d
 
 Do not expose the source-build Compose file directly. Use the
 [authenticated public deployment profile](docs/public-vps.md) or keep n0ding
-behind a VPN/SSH tunnel. For repeated preview use, work through the
-[private self-use checklist](docs/private-self-use.md).
+on loopback behind a same-host reverse proxy, VPN, or SSH tunnel. An operator
+may explicitly set `N0DING_BIND_ADDRESS` for a trusted private network, but
+n0ding has no built-in client authentication or RBAC. For repeated preview
+use, work through the [private self-use checklist](docs/private-self-use.md).
 
 After startup, point one or more standard clients at n0ding:
 

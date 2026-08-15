@@ -1,9 +1,11 @@
 # Deployment
 
 n0ding ships as a multi-architecture Linux container for AMD64 and ARM64. The
-same image runs through Docker Desktop on Windows and macOS. The default
-deployment binds only to loopback and is intended for public-preview use on
-localhost or a trusted private network.
+same image runs through Docker Desktop on Windows and macOS. Both the release
+deployment and the repository's source-build Compose quickstart bind only to
+loopback by default. Explicitly overriding `N0DING_BIND_ADDRESS` is reserved
+for a trusted private network; use the authenticated public VPS profile for an
+internet-reachable host.
 
 ## Install a specific version
 
