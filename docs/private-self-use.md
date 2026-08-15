@@ -5,10 +5,9 @@ readiness, a public launch gate, or permission to tag or publish an artifact.
 
 Use this checklist only for a disposable self-hosted npm, OCI, and PyPI cache
 on a trusted private network. PyPI publishing is optional and single-token;
-there is
-no n0ding client authentication or RBAC, and retention does not enforce a
-strict byte quota. The seven-day soak and real private provider drills remain
-open.
+there is no n0ding client authentication or RBAC. `storage.max_bytes` bounds
+accounted objects but is not a strict whole-filesystem quota. The seven-day
+soak and real private provider drills remain open.
 
 ## Before starting
 

@@ -7,6 +7,13 @@ All notable changes to n0ding are documented in this file. The project follows
 
 ### Changed
 
+- Added a shared logical `max_bytes` budget with concurrent admission
+  reservations, filesystem headroom, high/low-watermark global LRU pressure
+  collection, startup accounting, and bypass metrics. This does not claim a
+  hard quota over every byte on the filesystem.
+- Changed public release automation to require a manual approved `main` SHA,
+  an existing signed SemVer tag at that SHA, a successful exact-SHA push CI
+  run, and the `public-release` environment before publishing.
 - Classified downstream client cancellations separately from repository
   failures in JSON status, Prometheus metrics, and logs for npm, OCI, and
   PyPI proxies.
@@ -61,9 +68,9 @@ All notable changes to n0ding are documented in this file. The project follows
   corrupt/cross-version cases, and the rollback path.
 - Documented soak pass/fail criteria, durable progress/results, safe artifact
   handling, and the explicit rule that a smoke run is not seven-day evidence.
-- Conditionally accepted age-only retention for the private alpha, documented
-  disk-capacity guardrails and the remaining disk-full risk, and recorded the
-  correctness requirements for a future strict aggregate byte limit.
+- Recorded the earlier conditional age-only-retention decision, the subsequent
+  logical byte-budget design, disk-capacity guardrails, and the remaining
+  whole-filesystem disk-full risk.
 - Added a private self-use checklist that ties together cache volume isolation,
   capacity alerts, backup/restore, canary scans, status checks, safe restarts,
   rollback, cleanup, and remaining not-ready warnings.
@@ -96,7 +103,9 @@ No tag, public release, or published image exists yet.
   ecosystems beyond npm, PyPI, and OCI.
 - Podman is untested.
 - Range requests are proxied but partial responses are not cached.
-- Retention is age-based and does not enforce a strict disk quota.
+- Complete cache objects have age expiry and optional global LRU pressure
+  collection under a logical byte budget; there is no hard whole-filesystem
+  quota.
 - A writable cache directory supports one n0ding process only.
 
 See the [MVP readiness scorecard](docs/spike-scorecard.md) for exact commands,

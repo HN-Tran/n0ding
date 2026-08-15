@@ -172,11 +172,13 @@ the exact non-secret directory after confirming `credential_canary_scan` is
 ## What remains unproven
 
 The smoke proves the runner and short-timescale invariants, not seven days of
-availability, bounded growth, repeated expiry/restart races, or cumulative
-resource behavior. It also does not replace real npm/Docker clients, real
-private providers, TLS testing, network-partition testing, or a strict cache
-size limit. Its disk samples include real volume usage, but cannot turn
-age-only GC into a byte bound.
+availability, bounded whole-filesystem growth, repeated expiry/restart races,
+or cumulative resource behavior. It also does not replace real npm/Docker
+clients, real private providers, TLS testing, or network-partition testing.
+Its disk samples include real volume usage. The separate deterministic storage
+integration test proves concurrent `max_bytes` admission, bypass accounting,
+restart reconstruction, and global LRU pressure collection, but neither test
+turns the logical complete-object budget into a hard filesystem quota.
 
 Normal script failures run cleanup. Abrupt host shutdown, Docker daemon loss,
 or forced termination of the PowerShell process can prevent that `finally`
@@ -184,10 +186,10 @@ block. In that case, inspect resources whose exact names contain the evidence
 directory's `<id>` before removing them; do not use broad Docker cleanup
 commands.
 
-The [retention policy decision](retention-policy.md) conditionally accepts
-age-only GC for the private alpha and explains why a strict aggregate byte
-limit is not a small safe patch. After a real seven-day pass, the next gate is
-to record the intended deployment's capacity, alerts, observed growth
-headroom, and explicit residual-risk acceptance. Implement the documented
-`max_bytes` design instead if that evidence is not acceptable. The
-real-client/TLS compatibility matrix follows that gate.
+The [retention policy decision](retention-policy.md) records why the earlier
+age-only private-alpha position was replaced by the implemented logical byte
+budget, admission reservations, filesystem headroom, and LRU pressure GC.
+After a real seven-day pass, the next gate is to record the intended
+deployment's capacity, alerts, observed growth headroom, and explicit residual
+risk acceptance for bytes outside that budget. The real-client/TLS
+compatibility matrix follows that gate.

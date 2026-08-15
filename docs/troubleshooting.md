@@ -108,7 +108,9 @@ docker compose logs n0ding
 ## Disk usage does not fall immediately
 
 Retention is based on object commit age. It runs at startup and every
-`storage.gc_interval`; it is not LRU and does not enforce a byte quota.
+`storage.gc_interval`. When `storage.max_bytes` is configured, pressure GC also
+uses global LRU access hints to return from the high to the low watermark. The
+budget accounts complete objects, not every byte on the filesystem.
 Accessing an object does not renew its age, while refetching it does. Review
 `storage.max_age`, restart once to trigger a maintenance pass, and inspect
 status counters.

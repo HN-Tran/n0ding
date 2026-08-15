@@ -1,69 +1,190 @@
 name: Release
 
+# Releases are deliberately manual. A maintainer must first create the signed
+# SemVer tag, then approve the exact main commit and the protected environment.
 on:
-  push:
-    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing signed SemVer tag to publish (for example v0.1.0)
+        required: true
+        type: string
+      release_sha:
+        description: Full 40-character main commit SHA approved for release
+        required: true
+        type: string
 
-permissions:
-  contents: write
-  packages: write
-  id-token: write
-  attestations: write
+concurrency:
+  group: public-release
+  cancel-in-progress: false
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      tag: ${{ steps.verify.outputs.tag }}
+      sha: ${{ steps.verify.outputs.sha }}
+      tag_object_sha: ${{ steps.verify.outputs.tag_object_sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - id: verify
+        name: Verify approved tag, main SHA, and completed CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "release_sha must be a full lowercase commit SHA" >&2
+            exit 1
+          fi
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "tag must be a stable vMAJOR.MINOR.PATCH tag" >&2
+            exit 1
+          fi
+
+          ./tools/verify-release-source.sh
+
+          successful_runs="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${RELEASE_SHA}&status=success&event=push&per_page=1" \
+            --jq '.total_count')"
+          test "$successful_runs" -ge 1
+
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+
   release:
+    needs: gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    environment: public-release
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: true
-      - name: Verify source
+      - name: Verify source again on the approved SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.gate.outputs.sha }}
+          RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.gate.outputs.tag_object_sha }}
         run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ needs.gate.outputs.sha }}"
+          ./tools/verify-release-source.sh
           go test -race ./...
           go vet ./...
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Revalidate remote source immediately before registry login
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.gate.outputs.sha }}
+          RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.gate.outputs.tag_object_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          ./tools/verify-release-source.sh
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ghcr.io/hn-tran/n0ding
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ needs.gate.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.gate.outputs.tag }}
             type=raw,value=latest
+      - name: Revalidate remote source immediately before image build and push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.gate.outputs.sha }}
+          RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.gate.outputs.tag_object_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          ./tools/verify-release-source.sh
       - id: build
-        uses: docker/build-push-action@v6
+        name: Build and publish immutable image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: VERSION=${{ github.ref_name }}
+          build-args: VERSION=${{ needs.gate.outputs.tag }}
           provenance: mode=max
           sbom: true
       - name: Attest image
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
         with:
           subject-name: ghcr.io/hn-tran/n0ding
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
       - name: Prepare release assets
+        env:
+          IMAGE_REF: ghcr.io/hn-tran/n0ding@${{ steps.build.outputs.digest }}
         run: |
+          set -euo pipefail
           cp deploy/compose.yaml compose.yaml
           cp deploy/n0ding.toml n0ding.toml
           cp deploy/public/compose.yaml public-compose.yaml
           cp deploy/public/Caddyfile Caddyfile
           cp deploy/public/n0ding.toml public-n0ding.toml
           cp deploy/public/.env.example public.env.example
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          image = os.environ["IMAGE_REF"]
+          replacements = {
+              "compose.yaml": (
+                  "ghcr.io/hn-tran/n0ding:latest",
+                  image,
+              ),
+              "public.env.example": (
+                  "ghcr.io/hn-tran/n0ding:0.1.0",
+                  image,
+              ),
+              "install.sh": (
+                  "ghcr.io/hn-tran/n0ding:${IMAGE_VERSION}",
+                  image,
+              ),
+              "install.ps1": (
+                  "ghcr.io/hn-tran/n0ding:$ImageVersion",
+                  image,
+              ),
+          }
+          for name, (old, new) in replacements.items():
+              path = Path(name)
+              content = path.read_text(encoding="utf-8")
+              if content.count(old) != 1:
+                  raise SystemExit(f"expected exactly one image placeholder in {name}")
+              path.write_text(content.replace(old, new), encoding="utf-8")
+          PY
           sha256sum \
             compose.yaml n0ding.toml install.sh install.ps1 \
             public-compose.yaml Caddyfile public-n0ding.toml \
@@ -72,11 +193,17 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+          RELEASE_SHA: ${{ needs.gate.outputs.sha }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.gate.outputs.tag_object_sha }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          ./tools/verify-release-source.sh
+          gh release create "$RELEASE_TAG" \
             --verify-tag \
             --generate-notes \
-            --title "n0ding ${GITHUB_REF_NAME}" \
+            --title "n0ding ${RELEASE_TAG}" \
             compose.yaml n0ding.toml install.sh install.ps1 \
             public-compose.yaml Caddyfile public-n0ding.toml \
             public.env.example SHA256SUMS

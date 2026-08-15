@@ -283,8 +283,11 @@ credentials into a committed config.
   `/pypi/legacy/`.
 - Podman has not yet been tested.
 - Range requests are proxied, but partial responses are not cached.
-- Retention is based on maximum object age, not LRU or a strict byte quota;
-  preview use requires filesystem capacity monitoring.
+- Complete cache objects are removed by maximum age and, when `max_bytes` is
+  configured, by global least-recently-used pressure GC. Admission reservations
+  keep known-size cache writes within that logical budget. It is not a hard
+  quota for temporary, malformed, private-PyPI, metadata, or filesystem-
+  overhead bytes, so preview use still requires filesystem monitoring.
 - Only one n0ding process may write to a cache directory.
 - Only local filesystem storage is supported.
 

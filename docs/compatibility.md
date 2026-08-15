@@ -665,8 +665,9 @@ in [retention-soak.md](retention-soak.md). Long-duration growth, repeated
 restart/expiry races across 168 hours remain unverified until that profile
 actually completes.
 
-The subsequent [retention policy decision](retention-policy.md) made no runtime
-compatibility change: `v0.1-private` keeps the tested age-only behavior and
-does not claim a strict byte limit. Before the private gate closes, the target
-deployment still needs a real seven-day result plus capacity, free-space alert,
-and growth-headroom evidence.
+The subsequent [retention policy decision](retention-policy.md) records why the
+tested age-only baseline was replaced by a shared logical byte budget,
+admission reservations, and LRU pressure GC. This does not claim a hard
+whole-filesystem limit. Before the private gate closes, the target deployment
+still needs a real seven-day result plus capacity, free-space alert, and
+growth-headroom evidence.

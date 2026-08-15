@@ -129,13 +129,18 @@ when requested. Physical retention is separate:
 - GC runs every `storage.gc_interval`;
 - GC ignores every temporary file and skips malformed, incomplete, or
   size-mismatched object pairs.
+- when `storage.max_bytes` is configured, known-size writes reserve space
+  before creating cache temporaries; writes that cannot reserve space continue
+  to the client without being cached;
+- reaching the high watermark triggers global least-recently-used collection
+  of complete cache objects down to the low watermark. Successful reads update
+  a crash-safe access hint, and startup rebuilds committed-byte accounting.
 
-Age is measured from atomic cache commit, not last access. The MVP deliberately
-does not implement LRU or a strict size quota. This is conditionally accepted
-for `v0.1-private` only with a disposable, capacity-monitored cache. A safe
-future aggregate limit needs in-flight reservations, active-reader handling,
-repository-wide coordination, and accounting beyond valid complete bodies;
-the design boundary is recorded in
+Age expiration is measured from atomic cache commit, not last access; access
+time affects only pressure-GC ordering. `max_bytes` is a shared logical budget
+for accounted objects, not a hard quota over temporary, malformed, private
+publishing, metadata, or filesystem-overhead bytes. The cache must therefore
+remain disposable and capacity-monitored. The design boundary is recorded in
 [retention-policy.md](retention-policy.md).
 
 ## Concurrency model
@@ -190,7 +195,8 @@ unified auth layer exists.
 - local filesystem storage only
 - one process; no distributed locking
 - no npm or OCI private publish path; PyPI publish is an opt-in self-use path
-- age-based retention only; no byte quota or LRU
+- age-based expiry plus optional logical byte-budget admission and pressure LRU;
+  no hard whole-filesystem quota
 - npm/PyPI metadata rewrite limit of 64 MiB
 - OCI manifest limit of 16 MiB
 - SHA-256 OCI digests and PyPI fragments only

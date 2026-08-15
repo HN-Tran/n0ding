@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -172,6 +174,110 @@ func TestPressureCollectionRemovesLRUUntilLowWatermark(t *testing.T) {
 	if snapshot := server.storage.Snapshot(); snapshot.CommittedBytes != 5 || snapshot.Pressure {
 		t.Fatalf("storage = %#v", snapshot)
 	}
+}
+
+func TestStorageBudgetSurvivesConcurrentAdmissionAndRestart(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Config{
+		Server: config.Server{PublicBaseURL: "http://packages.test"},
+		Storage: config.Storage{
+			Path: root, MaxBytes: 10, HighWatermark: 0.8, LowWatermark: 0.5,
+			StaleTempAge: time.Hour,
+		},
+		Repositories: []config.Repository{
+			{Name: "npm", Type: "npm", Path: "/npm/", Upstream: "https://registry.npmjs.org", TTL: time.Hour},
+			{Name: "oci", Type: "oci", Path: "/v2/", Upstream: "https://registry-1.docker.io", TTL: time.Hour},
+		},
+	}
+	server, err := New(cfg, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := http.Header{"Content-Length": []string{"6"}}
+	start := make(chan struct{})
+	var wait sync.WaitGroup
+	for index, store := range server.stores {
+		wait.Add(1)
+		go func(index int, store *cache.Store) {
+			defer wait.Done()
+			<-start
+			var downstream strings.Builder
+			if err := store.PutStream(
+				fmt.Sprintf("concurrent-%d", index),
+				cache.Metadata{Status: http.StatusOK, Header: header.Clone()},
+				strings.NewReader("123456"), &downstream,
+			); err != nil {
+				t.Errorf("concurrent write %d: %v", index, err)
+			}
+			if downstream.String() != "123456" {
+				t.Errorf("downstream %d = %q", index, downstream.String())
+			}
+		}(index, store.store)
+	}
+	close(start)
+	wait.Wait()
+
+	snapshot := server.storage.Snapshot()
+	if snapshot.CommittedBytes != 6 || snapshot.BypassObjects != 1 || snapshot.BypassBytes != 6 {
+		t.Fatalf("concurrent admission snapshot = %#v", snapshot)
+	}
+	if err := server.stores[0].store.PutBytes(
+		"newest", cache.Metadata{Status: http.StatusOK, Header: http.Header{"Content-Length": []string{"3"}}}, []byte("new"),
+	); err != nil {
+		t.Fatal(err)
+	}
+	oldest := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	newest := oldest.Add(time.Hour)
+	for index, managed := range server.stores {
+		entry, found, lookupErr := managed.store.Lookup(fmt.Sprintf("concurrent-%d", index), time.Hour)
+		if lookupErr != nil {
+			t.Fatal(lookupErr)
+		}
+		if found {
+			if err := os.Chtimes(entry.BodyPath, oldest, oldest); err != nil {
+				_ = entry.Close()
+				t.Fatal(err)
+			}
+			_ = entry.Close()
+		}
+	}
+	newestEntry, found, err := server.stores[0].store.Lookup("newest", time.Hour)
+	if err != nil || !found {
+		t.Fatalf("newest entry before restart found=%v err=%v", found, err)
+	}
+	if err := os.Chtimes(newestEntry.BodyPath, newest, newest); err != nil {
+		_ = newestEntry.Close()
+		t.Fatal(err)
+	}
+	_ = newestEntry.Close()
+	if !server.storage.Snapshot().Pressure {
+		t.Fatal("expected pressure after admitted write")
+	}
+
+	// Reconstruct the server from disk to prove that complete-object usage is
+	// reconciled before the next admission or pressure collection.
+	restarted, err := New(cfg, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot := restarted.storage.Snapshot(); snapshot.CommittedBytes != 9 || !snapshot.Pressure {
+		t.Fatalf("restart snapshot = %#v", snapshot)
+	}
+	result, err := restarted.collectPressure(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RemovedObjects != 1 || result.RemovedBytes != 6 {
+		t.Fatalf("pressure result = %#v", result)
+	}
+	if snapshot := restarted.storage.Snapshot(); snapshot.CommittedBytes != 3 || snapshot.Pressure {
+		t.Fatalf("post-pressure snapshot = %#v", snapshot)
+	}
+	entry, found, err := restarted.stores[0].store.Lookup("newest", time.Hour)
+	if err != nil || !found {
+		t.Fatalf("newest entry found=%v err=%v", found, err)
+	}
+	_ = entry.Close()
 }
 
 func TestOperatorGCRequiresSeparateBearerToken(t *testing.T) {

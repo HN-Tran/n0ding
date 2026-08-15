@@ -214,11 +214,15 @@ Do not treat a short or resumed run as seven-day evidence. Exact profiles,
 pass/fail criteria, artifacts, and cleanup behavior are in the
 [retention/concurrency soak guide](retention-soak.md).
 
-## Disk capacity and age-only retention
+## Disk capacity, byte budget, and retention
 
-`v0.1.0` deliberately keeps age-only retention. It has no strict byte
-quota. This is acceptable only for a disposable preview cache on a
-capacity-monitored, preferably dedicated volume.
+`v0.1.0` supports a shared `storage.max_bytes` budget for valid accounted
+objects. Known-size writes reserve capacity before caching; pressure GC removes
+global least-recently-used complete cache entries from the high watermark to
+the low watermark. This is intentionally not a strict whole-filesystem quota:
+temporary, malformed/orphaned, metadata, private-PyPI, and filesystem-overhead
+bytes can sit outside the evictable cache total. Use a capacity-monitored,
+preferably dedicated volume.
 
 Monitor both n0ding's valid complete-object total and the real filesystem:
 
@@ -234,10 +238,10 @@ objects can reach `storage.max_age`. The repository storage metric excludes
 temporary, corrupt/orphaned, metadata, and filesystem-overhead bytes, so it
 cannot replace `df`.
 
-Choose `max_age` from the usable capacity and worst credible unique-ingress
-rate. If pressure grows, lower `max_age` and restart n0ding to run startup GC.
-If space remains critical, stop the service before replacing its disposable
-cache volume; never delete individual cache objects while n0ding is running.
+Set `max_bytes` below usable capacity with headroom for unaccounted bytes, and
+choose `max_age` from the worst credible unique-ingress rate. If space remains
+critical, stop the service before replacing its disposable cache volume; never
+delete individual cache objects while n0ding is running.
 
 The complete decision, remaining disk-full failure mode, capacity example, and
 requirements for a future strict aggregate limit are in the
@@ -255,8 +259,9 @@ requirements for a future strict aggregate limit are in the
   upstream credential handling exists.
 - Podman remains untested.
 - Range requests are proxied but partial responses are not cached.
-- Retention is maximum age from commit time, not LRU and not a strict size
-  quota. Disk monitoring and capacity planning are required.
+- Age expiry uses commit time; pressure collection uses global LRU access hints.
+  The logical `max_bytes` budget is not a hard whole-filesystem quota, so disk
+  monitoring and capacity planning remain required.
 - There is no multi-process or shared-volume locking.
 - Only local filesystem storage is supported.
 - The deterministic retention smoke has passed; the uninterrupted seven-day

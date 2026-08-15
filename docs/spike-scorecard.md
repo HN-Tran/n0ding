@@ -129,7 +129,9 @@ objects.
   the upstream auth required for OCI pulls.
 - Podman is untested.
 - Range requests are proxied but partial responses are not cached.
-- Retention is maximum age from commit, not LRU or a strict maximum size.
+- This historical scorecard predates the shared logical byte budget and LRU
+  pressure GC. The current implementation still has no hard whole-filesystem
+  maximum; see [retention-policy.md](retention-policy.md).
 - A cache directory supports one n0ding process; there is no distributed lock.
 - Cross-version restore compatibility and recovery of real private-upstream
   output remain unproven.

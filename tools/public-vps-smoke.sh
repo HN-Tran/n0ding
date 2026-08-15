@@ -52,7 +52,7 @@ n0ding.test {
 EOF
 docker network create "$network" >/dev/null
 docker run -d --name "$n0ding" --network "$network" --network-alias n0ding -e N0DING_PUBLIC_URL=https://n0ding.test -v "$root/deploy/public/n0ding.toml:/etc/n0ding/n0ding.toml:ro" -v "$work/operator-token:/run/secrets/n0ding-operator-token:ro" n0ding:public-vps-ci >/dev/null
-docker run -d --name "$caddy" --network "$network" -p 443:443 -v "$work/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$work/ca.pem:/etc/caddy/client-ca.pem:ro" caddy:2.10.0-alpine >/dev/null
+docker run -d --name "$caddy" --network "$network" -p 443:443 -v "$work/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$work/ca.pem:/etc/caddy/client-ca.pem:ro" caddy:2.10.0-alpine@sha256:ae4458638da8e1a91aafffb231c5f8778e964bca650c8a8cb23a7e8ac557aa3c >/dev/null
 caddy_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$caddy")
 test -n "$caddy_ip"
 echo "$caddy_ip n0ding.test" | sudo tee -a /etc/hosts >/dev/null
