@@ -36,6 +36,18 @@ npm / pip / uv / Docker
 > Caddy profile, a dedicated cache volume, and free-space alerts. It is not a
 > production supply-chain security service.
 
+## Small service, measured behavior
+
+![n0ding v0.1 Homelab stress benchmark](docs/assets/stress-benchmark-2026-08-16.svg)
+
+In a post-release Homelab reference run, n0ding completed **30,458 cached npm,
+PyPI, and OCI protocol requests with zero HTTP errors or response hash
+mismatches**. Mixed-workload throughput peaked around 179 requests/second on
+that host; a single hot npm artifact reached 1,391 requests/second. These are
+installation-specific observations, not production guarantees.
+
+See the [method, complete results, and limitations](docs/stress-benchmark-2026-08-16.md).
+
 ## Why n0ding
 
 - One Go binary with one TOML configuration file.

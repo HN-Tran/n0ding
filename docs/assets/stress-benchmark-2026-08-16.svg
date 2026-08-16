@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">n0ding v0.1 mixed-load benchmark</title>
+  <desc id="desc">Throughput rises from 25 requests per second at concurrency 5 to 179 at concurrency 50, then falls to 147 at concurrency 100. Every measured request completed without an HTTP error or hash mismatch.</desc>
+  <style>
+    :root { color-scheme: light dark; }
+    .bg { fill: #f8fafc; } .card { fill: #fff; stroke: #cbd5e1; }
+    .grid { stroke: #dbe3ed; stroke-width: 1; } .axis { stroke: #64748b; stroke-width: 1.5; }
+    .bar { fill: #2563eb; } .sweet { fill: #0f766e; }
+    .line { fill: none; stroke: #ea580c; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+    .dot { fill: #ea580c; stroke: #fff; stroke-width: 2; }
+    .title { fill: #0f172a; font: 700 26px ui-sans-serif, system-ui, sans-serif; }
+    .subtitle { fill: #475569; font: 15px ui-sans-serif, system-ui, sans-serif; }
+    .label { fill: #334155; font: 13px ui-sans-serif, system-ui, sans-serif; }
+    .value { fill: #0f172a; font: 700 14px ui-sans-serif, system-ui, sans-serif; }
+    .metric { fill: #0f172a; font: 700 24px ui-sans-serif, system-ui, sans-serif; }
+    .metric-sub { fill: #475569; font: 13px ui-sans-serif, system-ui, sans-serif; }
+    .legend-blue { fill: #2563eb; } .legend-orange { stroke: #ea580c; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0f172a; } .card { fill: #111c31; stroke: #334155; }
+      .grid { stroke: #27364d; } .axis { stroke: #94a3b8; }
+      .bar { fill: #60a5fa; } .sweet { fill: #2dd4bf; }
+      .title, .value, .metric { fill: #f8fafc; }
+      .subtitle, .label, .metric-sub { fill: #cbd5e1; }
+      .line, .dot, .legend-orange { stroke: #fb923c; } .dot { fill: #fb923c; }
+      .legend-blue { fill: #60a5fa; }
+    }
+  </style>
+  <rect class="bg" width="960" height="540" rx="18"/>
+  <text class="title" x="44" y="52">v0.1 Homelab stress benchmark</text>
+  <text class="subtitle" x="44" y="78">Mixed cached npm, PyPI and OCI protocol traffic · 15 seconds per level</text>
+  <rect class="card" x="36" y="104" width="888" height="324" rx="14"/>
+  <line class="grid" x1="108" y1="154" x2="876" y2="154"/><line class="grid" x1="108" y1="214" x2="876" y2="214"/>
+  <line class="grid" x1="108" y1="274" x2="876" y2="274"/><line class="grid" x1="108" y1="334" x2="876" y2="334"/>
+  <line class="axis" x1="108" y1="394" x2="876" y2="394"/>
+  <text class="label" x="76" y="399">0</text><text class="label" x="64" y="339">50</text>
+  <text class="label" x="57" y="279">100</text><text class="label" x="57" y="219">150</text><text class="label" x="57" y="159">200</text>
+  <rect class="bar" x="150" y="364" width="82" height="30" rx="5"/><rect class="bar" x="294" y="310" width="82" height="84" rx="5"/>
+  <rect class="sweet" x="438" y="194" width="82" height="200" rx="5"/><rect class="sweet" x="582" y="179" width="82" height="215" rx="5"/>
+  <rect class="bar" x="726" y="217" width="82" height="177" rx="5"/>
+  <text class="value" x="191" y="354" text-anchor="middle">25</text><text class="value" x="335" y="300" text-anchor="middle">70</text>
+  <text class="value" x="479" y="184" text-anchor="middle">167</text><text class="value" x="623" y="169" text-anchor="middle">179</text>
+  <text class="value" x="767" y="207" text-anchor="middle">147</text>
+  <text class="label" x="191" y="416" text-anchor="middle">5</text><text class="label" x="335" y="416" text-anchor="middle">10</text>
+  <text class="label" x="479" y="416" text-anchor="middle">25</text><text class="label" x="623" y="416" text-anchor="middle">50</text>
+  <text class="label" x="767" y="416" text-anchor="middle">100</text>
+  <polyline class="line" points="191,278 335,328 479,337 623,285 767,127"/>
+  <circle class="dot" cx="191" cy="278" r="6"/><circle class="dot" cx="335" cy="328" r="6"/><circle class="dot" cx="479" cy="337" r="6"/>
+  <circle class="dot" cx="623" cy="285" r="6"/><circle class="dot" cx="767" cy="127" r="6"/>
+  <text class="value" x="780" y="120">p99 2.12 s</text>
+  <rect class="legend-blue" x="111" y="119" width="14" height="14" rx="3"/><text class="label" x="133" y="131">requests/second</text>
+  <line class="legend-orange" x1="272" y1="126" x2="294" y2="126" stroke-width="4"/><text class="label" x="302" y="131">p99 latency</text>
+  <rect class="card" x="36" y="448" width="276" height="68" rx="12"/><text class="metric" x="56" y="478">30,458</text><text class="metric-sub" x="56" y="500">measured requests</text>
+  <rect class="card" x="330" y="448" width="276" height="68" rx="12"/><text class="metric" x="350" y="478">0 errors</text><text class="metric-sub" x="350" y="500">and 0 hash mismatches</text>
+  <rect class="card" x="624" y="448" width="300" height="68" rx="12"/><text class="metric" x="644" y="478">1,391 req/s</text><text class="metric-sub" x="644" y="500">single hot npm artifact at 200-way concurrency</text>
+</svg>
