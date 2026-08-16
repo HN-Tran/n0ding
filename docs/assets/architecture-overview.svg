@@ -33,9 +33,14 @@
   <rect class="bg" width="920" height="280" rx="18"/>
   <text class="title" x="32" y="40">One cache between your clients and public registries</text>
 
-  <path class="edge" d="M 252 117 H 349" marker-end="url(#arrow)"/>
-  <path class="edge" d="M 571 117 H 668" marker-end="url(#arrow)"/>
+  <path class="edge" d="M 252 117 H 349" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <path class="edge" d="M 571 117 H 668" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
   <path class="edge" d="M 460 174 V 204" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text class="small" x="300" y="101" text-anchor="middle">request</text>
+  <text class="small" x="300" y="142" text-anchor="middle">response</text>
+  <text class="small" x="620" y="101" text-anchor="middle">request</text>
+  <text class="small" x="620" y="142" text-anchor="middle">response</text>
+  <text class="small" x="486" y="194">read / write</text>
 
   <rect class="node clients" x="32" y="67" width="220" height="100" rx="14"/>
   <text class="label" x="142" y="103" text-anchor="middle">Clients</text>
