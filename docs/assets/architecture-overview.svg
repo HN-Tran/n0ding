@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="280" viewBox="0 0 920 280" role="img" aria-labelledby="title desc">
+  <title id="title">How n0ding routes artifact downloads</title>
+  <desc id="desc">npm, pip, uv, and Docker clients request artifacts from n0ding. n0ding reads and writes a persistent local cache and fetches missing artifacts from npmjs.org, PyPI, or Docker Hub.</desc>
+  <style>
+    :root { color-scheme: light dark; }
+    .bg { fill: #f8fafc; }
+    .node { stroke: #64748b; stroke-width: 1.5; }
+    .clients { fill: #dbeafe; }
+    .service { fill: #e0e7ff; }
+    .storage { fill: #ccfbf1; }
+    .external { fill: #fef3c7; }
+    .edge { fill: none; stroke: #64748b; stroke-width: 2.5; }
+    .title { fill: #0f172a; font: 700 22px ui-sans-serif, system-ui, sans-serif; }
+    .label { fill: #0f172a; font: 700 17px ui-sans-serif, system-ui, sans-serif; }
+    .small { fill: #475569; font: 14px ui-sans-serif, system-ui, sans-serif; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0f172a; }
+      .node { stroke: #94a3b8; }
+      .clients { fill: #1e3a8a; }
+      .service { fill: #3730a3; }
+      .storage { fill: #115e59; }
+      .external { fill: #78350f; }
+      .edge { stroke: #94a3b8; }
+      .title, .label { fill: #f8fafc; }
+      .small { fill: #cbd5e1; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect class="bg" width="920" height="280" rx="18"/>
+  <text class="title" x="32" y="40">One cache between your clients and public registries</text>
+
+  <path class="edge" d="M 252 117 H 349" marker-end="url(#arrow)"/>
+  <path class="edge" d="M 571 117 H 668" marker-end="url(#arrow)"/>
+  <path class="edge" d="M 460 174 V 204" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+
+  <rect class="node clients" x="32" y="67" width="220" height="100" rx="14"/>
+  <text class="label" x="142" y="103" text-anchor="middle">Clients</text>
+  <text class="small" x="142" y="132" text-anchor="middle">npm · pip · uv · Docker</text>
+
+  <rect class="node service" x="349" y="67" width="222" height="107" rx="14"/>
+  <text class="label" x="460" y="107" text-anchor="middle">n0ding</text>
+  <text class="small" x="460" y="136" text-anchor="middle">one Go service</text>
+
+  <rect class="node external" x="668" y="67" width="220" height="100" rx="14"/>
+  <text class="label" x="778" y="103" text-anchor="middle">Upstreams</text>
+  <text class="small" x="778" y="132" text-anchor="middle">npmjs.org · PyPI · Docker Hub</text>
+
+  <rect class="node storage" x="349" y="204" width="222" height="52" rx="14"/>
+  <text class="label" x="460" y="237" text-anchor="middle">Persistent local cache</text>
+</svg>
