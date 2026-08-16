@@ -327,7 +327,7 @@ func (p *Proxy) serveMiss(
 	case "manifest":
 		p.cacheManifest(writer, request, response, headers, cacheHeaders, key, expectedDigest)
 	case "blob":
-		p.cacheBlob(writer, response, headers, cacheHeaders, key, expectedDigest)
+		p.cacheBlob(writer, request, response, headers, cacheHeaders, key, expectedDigest)
 	default:
 		p.passThrough(writer, request, response, headers)
 	}
@@ -378,6 +378,7 @@ func (p *Proxy) cacheManifest(
 
 func (p *Proxy) cacheBlob(
 	writer http.ResponseWriter,
+	request *http.Request,
 	response *http.Response,
 	headers http.Header,
 	cacheHeaders http.Header,
@@ -402,9 +403,18 @@ func (p *Proxy) cacheBlob(
 		func(int64) error { return verifySHA256(hasher, expectedDigest) },
 	)
 	if err != nil {
-		p.stats.errors.Add(1)
-		p.logger.Error("cache OCI blob failed", "repository", p.name, "error", err)
+		p.recordStreamError(request, "cache OCI blob failed", err)
 	}
+}
+
+func (p *Proxy) recordStreamError(request *http.Request, message string, err error) {
+	if errors.Is(err, context.Canceled) || errors.Is(request.Context().Err(), context.Canceled) {
+		p.stats.clientCanceled.Add(1)
+		p.logger.Debug("client canceled stream", "repository", p.name, "method", request.Method, "path", request.URL.Path)
+		return
+	}
+	p.stats.errors.Add(1)
+	p.logger.Error(message, "repository", p.name, "error", httppolicy.SafeError(err))
 }
 
 func (p *Proxy) passThrough(

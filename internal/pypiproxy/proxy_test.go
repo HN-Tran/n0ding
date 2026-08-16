@@ -36,6 +36,66 @@ func TestClientCancellationIsNotCountedAsRepositoryError(t *testing.T) {
 	}
 }
 
+type cancelingStreamWriter struct {
+	header http.Header
+	cancel context.CancelFunc
+	err    error
+}
+
+func (w *cancelingStreamWriter) Header() http.Header { return w.header }
+func (w *cancelingStreamWriter) WriteHeader(int)     {}
+func (w *cancelingStreamWriter) Write([]byte) (int, error) {
+	if w.cancel != nil {
+		w.cancel()
+	}
+	return 0, w.err
+}
+
+func TestStreamResponseClassifiesCancellationAndCleansCache(t *testing.T) {
+	root := t.TempDir()
+	store, err := cache.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := &Proxy{name: "pypi", store: store, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	ctx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, "http://n0ding.test/pypi/files/x.whl", nil).WithContext(ctx)
+	writer := &cancelingStreamWriter{header: make(http.Header), cancel: cancel, err: context.Canceled}
+	response := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("wheel bytes"))}
+	proxy.streamResponse(writer, request, response, make(http.Header), make(http.Header), "key", true, nil)
+	if proxy.stats.clientCanceled.Load() != 1 || proxy.stats.errors.Load() != 0 {
+		t.Fatalf("canceled=%d errors=%d", proxy.stats.clientCanceled.Load(), proxy.stats.errors.Load())
+	}
+	if bytes, objects, err := store.Size(); err != nil || bytes != 0 || objects != 0 {
+		t.Fatalf("cache=%d/%d err=%v", bytes, objects, err)
+	}
+	assertNoStreamCacheFiles(t, root)
+}
+
+func assertNoStreamCacheFiles(t *testing.T, root string) {
+	t.Helper()
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			t.Errorf("unexpected cache file %s", path)
+		}
+		return nil
+	})
+}
+
+func TestStreamResponseClassifiesNonCancellationError(t *testing.T) {
+	store, _ := cache.New(t.TempDir())
+	proxy := &Proxy{name: "pypi", store: store, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	request := httptest.NewRequest(http.MethodGet, "http://n0ding.test/pypi/files/x.whl", nil)
+	writer := &cancelingStreamWriter{header: make(http.Header), err: errors.New("broken downstream")}
+	proxy.streamResponse(writer, request, &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("wheel"))}, make(http.Header), make(http.Header), "key", true, nil)
+	if proxy.stats.clientCanceled.Load() != 0 || proxy.stats.errors.Load() != 1 {
+		t.Fatalf("canceled=%d errors=%d", proxy.stats.clientCanceled.Load(), proxy.stats.errors.Load())
+	}
+}
+
 func TestProxyRewritesAndCachesSimpleHTMLAndHashedFile(t *testing.T) {
 	fileBody := []byte("wheel bytes")
 	hash := sha256.Sum256(fileBody)

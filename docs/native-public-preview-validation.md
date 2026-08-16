@@ -58,6 +58,34 @@ read only from the repository type targeted by the canceled request. The retry
 has its own hashed integrity artifact, which is recomputed; a boolean success
 claim is not evidence.
 
+The cancellation fixture is the fixed `pip==25.2` universal wheel and is not
+used by the normal idna matrix. Its digest must be absent from the dedicated
+server cache before a throttled cold-miss transfer is terminated. Evidence is
+accepted only when a hashed mid-transfer observation shows a positive storage
+reservation before termination. Its timestamp must fall inside the real
+attempt interval and precede the target repository cancellation-counter
+increase. After termination, evidence is accepted only after that counter increases and
+reservations, temporary files, and orphan bodies return to zero. The retry
+downloads that exact wheel and its captured bytes must match the same digest.
+
+For Docker, “fresh client state” is deliberately narrow: the proxy-qualified
+image reference must be absent and `DOCKER_CONFIG` must be a new empty
+directory. Existing content-addressed layer blobs may remain in the daemon;
+the adapter performs only a scoped `docker image rm` for the proxy reference,
+never pruning the daemon. The real pull and server-side OCI hit delta remain
+required. On the Homelab origin the adapter resolves and records the dedicated
+server cache as `/var/lib/n0ding-preview`; alternate paths are test-only.
+Client processes receive a controlled empty home/config directory and an
+allowlisted environment; inherited registry credentials, package indexes,
+proxy variables, and user configuration are not forwarded. The launch barrier
+records timestamps only after release, and all waiters timestamp completion
+concurrently so a quick client cannot gain an inflated overlap interval while
+the launcher waits for a slower client.
+Because the Homelab preview index uses HTTP, real pip install/download commands
+carry `--trusted-host` explicitly. The value must equal only the hostname
+parsed from that command's `--index-url` (never a caller-supplied alternate
+host); the port remains part of the index URL, not the trust value.
+
 The repository validates the hook contract but cannot supply the deployment-
 specific Docker endpoint. The adapter must be reviewed with the final host
 configuration and must identify a reachable real Docker Engine; without that

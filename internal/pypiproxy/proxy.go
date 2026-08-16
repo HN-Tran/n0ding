@@ -523,13 +523,23 @@ func (p *Proxy) streamResponse(
 		}
 		metadata := cache.Metadata{Status: response.StatusCode, Header: cacheHeaders}
 		if err := p.store.PutStreamVerified(key, metadata, source, writer, verifier); err != nil {
-			p.logger.Warn("cache PyPI body failed", "repository", p.name, "error", err)
+			p.recordStreamError(request, "cache PyPI body failed", err)
 		}
 		return
 	}
 	if _, err := io.Copy(writer, response.Body); err != nil {
 		p.logger.Debug("proxy PyPI stream failed", "repository", p.name, "error", err)
 	}
+}
+
+func (p *Proxy) recordStreamError(request *http.Request, message string, err error) {
+	if errors.Is(err, context.Canceled) || errors.Is(request.Context().Err(), context.Canceled) {
+		p.stats.clientCanceled.Add(1)
+		p.logger.Debug("client canceled stream", "repository", p.name, "method", request.Method, "path", request.URL.Path)
+		return
+	}
+	p.stats.errors.Add(1)
+	p.logger.Warn(message, "repository", p.name, "error", httppolicy.SafeError(err))
 }
 
 func (p *Proxy) doUpstream(request *http.Request, target *url.URL) (*http.Response, error) {

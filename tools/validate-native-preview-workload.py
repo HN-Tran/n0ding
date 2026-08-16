@@ -38,11 +38,19 @@ def command(root,event,ecosystem):
         wanted=required[position] if position<len(required) else None
         if wanted is not None and (token==wanted or (wanted=="pip" and token.endswith("/pip")) or (wanted=="library/alpine:3.20" and token.endswith("/"+wanted))): position+=1
     if position!=len(required): fail(f"command does not bind required {ecosystem} target")
+    if ecosystem=="pip": validate_pip_http_trust(argv)
     if ecosystem=="npm":
         fixture=os.path.join(os.path.dirname(os.path.dirname(__file__)),TARGETS["npm"])
         with open(fixture,"rb") as source: expected=hashlib.sha256(source.read()).hexdigest()
         if value.get("fixture_sha256")!=expected: fail("npm command does not bind committed lock fixture")
     return argv
+def validate_pip_http_trust(argv):
+    if argv.count("--index-url")!=1 or argv.count("--trusted-host")!=1: fail("pip HTTP command must contain exactly one index URL and trusted host")
+    try: index=argv[argv.index("--index-url")+1]; trusted=argv[argv.index("--trusted-host")+1]
+    except (ValueError,IndexError): fail("pip HTTP command lacks explicit trusted host")
+    from urllib.parse import urlsplit
+    parsed=urlsplit(index)
+    if parsed.scheme!="http" or not parsed.hostname or trusted!=parsed.hostname: fail("pip trusted host does not exactly match HTTP index hostname")
 def interval(event):
     integer(event.get("started_epoch_ms"),"started_epoch_ms",1); integer(event.get("ended_epoch_ms"),"ended_epoch_ms",1)
     if event["ended_epoch_ms"] < event["started_epoch_ms"]: fail("negative event interval")
@@ -101,7 +109,12 @@ def metrics(root,event,field):
     temps=sum(1 for p in files if isinstance(p,str) and os.path.basename(p).startswith((".body-",".metadata-")))
     bodies={p for p in files if isinstance(p,str) and re.search(r"/[0-9a-f]{64}\.body(?:\..+)?$","/"+p)}
     refs={x.get("body") for x in raw.get("cache_metadata",[]) if isinstance(x,dict) and isinstance(x.get("body"),str)}
-    return {"client_canceled":canceled,"temp_files":temps,"orphan_bodies":len(bodies-refs),"reservations":int(int(match.group(1))!=0)}
+    digests={x.get("content_digest") for x in raw.get("cache_metadata",[]) if isinstance(x,dict)}
+    return {"client_canceled":canceled,"temp_files":temps,"orphan_bodies":len(bodies-refs),"reservations":int(int(match.group(1))!=0),"content_digests":digests}
+def cancellation_command(root,event):
+    value=json_artifact(root,event,"command_artifact"); argv=value.get("argv") if isinstance(value,dict) else None
+    if not isinstance(argv,list) or "pip" not in argv or "download" not in argv or "pip==25.2" not in argv: fail("retry command does not bind fixed pip==25.2 wheel")
+    validate_pip_http_trust(argv)
 def load(path):
     events=[]
     with open(path,encoding="utf-8") as source:
@@ -148,7 +161,11 @@ def validate(events, root, rounds, restarts, ledger):
         before=status_hits(root,event,"status_before_artifact",eco); after=status_hits(root,event,"status_after_artifact",eco)
         if event.get("hits_before")!=before or event.get("hits_after")!=after: fail("fabricated cache hit delta")
         pre=json_artifact(root,event,"cache_prestate_artifact")
-        if pre != {"identity":event.get("cache_identity"),"entries":[]}: fail("client cache was reused or nonempty")
+        expected_pre={"identity":event.get("cache_identity"),"entries":[]}
+        if eco=="oci":
+            argv=command(root,event,eco)
+            expected_pre.update({"proxy_reference":argv[-1],"proxy_image_present":False,"retained_layer_blobs_allowed":True})
+        if pre != expected_pre: fail("client cache was reused or nonempty")
         if phase in ("warm","post_restart") and event["hits_after"] <= event["hits_before"]: fail(f"{eco} {phase} did not increase cache hits")
         recompute_integrity(root,event,eco)
         if phase=="post_restart":
@@ -174,16 +191,26 @@ def validate(events, root, rounds, restarts, ledger):
             interval(event); artifact(root,event,"output_artifact")
             integer(event.get("exit_code"),"exit_code")
             if event.get("ecosystem") not in ECOSYSTEMS or not isinstance(event.get("object"),str) or not event["object"]: fail("cancellation target missing")
+            if event.get("ecosystem")!="pip" or event.get("object")!="pip==25.2": fail("wrong fixed cancellation target")
             integrity(event,event["ecosystem"])
             before=metrics(root,event,"before_metrics_artifact"); after=metrics(root,event,"after_metrics_artifact")
             event["_before_metrics"],event["_after_metrics"]=before,after
         if pair[0]["exit_code"] == 0 or pair[0].get("terminated") is not True: fail("cancellation attempt was not terminated")
+        admission=metrics(root,pair[0],"admission_metrics_artifact")
+        integer(pair[0].get("admission_epoch_ms"),"admission_epoch_ms",1)
+        if not pair[0]["started_epoch_ms"] <= pair[0]["admission_epoch_ms"] <= pair[0]["ended_epoch_ms"]: fail("in-flight admission timestamp is outside attempt interval")
+        if admission["reservations"]!=1: fail("cancellation was killed before in-flight admission")
+        if admission["client_canceled"]!=pair[0]["_before_metrics"]["client_canceled"]: fail("admission observation was captured after cancellation")
         if pair[0]["_after_metrics"]["client_canceled"] <= pair[0]["_before_metrics"]["client_canceled"]: fail("client_canceled did not increase")
+        target_digest="sha256:"+integrity(pair[0],"pip")
+        if any(target_digest in snapshot["content_digests"] for snapshot in (pair[0]["_before_metrics"],admission,pair[0]["_after_metrics"])): fail("cancellation target was not a cold uncommitted miss")
         for event in pair:
             after=event["_after_metrics"]
             if any(after[name] for name in ("temp_files","orphan_bodies","reservations")): fail("cancellation leaked temporary state or reservation")
         if pair[1]["exit_code"] != 0: fail(f"{name} retry did not recover")
+        cancellation_command(root,pair[1])
         recompute_integrity(root,pair[1],pair[1]["ecosystem"])
+        if target_digest not in pair[1]["_after_metrics"]["content_digests"]: fail("retry did not commit exact cancellation target")
         if pair[0]["ecosystem"]!=pair[1]["ecosystem"] or pair[0]["object"]!=pair[1]["object"] or pair[0]["integrity"]!=pair[1]["integrity"]: fail("cancellation retry target/integrity changed")
 
 def main():

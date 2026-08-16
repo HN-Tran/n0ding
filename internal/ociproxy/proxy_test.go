@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -27,6 +28,71 @@ func TestClientCancellationIsNotCountedAsRepositoryError(t *testing.T) {
 
 	if canceled, failures := proxy.stats.clientCanceled.Load(), proxy.stats.errors.Load(); canceled != 1 || failures != 0 {
 		t.Fatalf("client_canceled=%d errors=%d", canceled, failures)
+	}
+}
+
+type cancelingBlobWriter struct {
+	header http.Header
+	cancel context.CancelFunc
+	err    error
+}
+
+func (w *cancelingBlobWriter) Header() http.Header { return w.header }
+func (w *cancelingBlobWriter) WriteHeader(int)     {}
+func (w *cancelingBlobWriter) Write([]byte) (int, error) {
+	if w.cancel != nil {
+		w.cancel()
+	}
+	return 0, w.err
+}
+
+func TestCacheBlobClassifiesCancellationAndCleansCache(t *testing.T) {
+	body := []byte("blob bytes")
+	sum := sha256.Sum256(body)
+	digest := "sha256:" + hex.EncodeToString(sum[:])
+	root := t.TempDir()
+	store, err := cache.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := &Proxy{name: "oci", store: store, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	ctx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, "http://n0ding.test/v2/x/blobs/"+digest, nil).WithContext(ctx)
+	writer := &cancelingBlobWriter{header: make(http.Header), cancel: cancel, err: context.Canceled}
+	proxy.cacheBlob(writer, request, &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body))}, make(http.Header), make(http.Header), "key", digest)
+	if proxy.stats.clientCanceled.Load() != 1 || proxy.stats.errors.Load() != 0 {
+		t.Fatalf("canceled=%d errors=%d", proxy.stats.clientCanceled.Load(), proxy.stats.errors.Load())
+	}
+	if size, objects, err := store.Size(); err != nil || size != 0 || objects != 0 {
+		t.Fatalf("cache=%d/%d err=%v", size, objects, err)
+	}
+	assertNoBlobCacheFiles(t, root)
+}
+
+func assertNoBlobCacheFiles(t *testing.T, root string) {
+	t.Helper()
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			t.Errorf("unexpected cache file %s", path)
+		}
+		return nil
+	})
+}
+
+func TestCacheBlobClassifiesNonCancellationError(t *testing.T) {
+	body := []byte("blob bytes")
+	sum := sha256.Sum256(body)
+	digest := "sha256:" + hex.EncodeToString(sum[:])
+	store, _ := cache.New(t.TempDir())
+	proxy := &Proxy{name: "oci", store: store, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	request := httptest.NewRequest(http.MethodGet, "http://n0ding.test/v2/x/blobs/"+digest, nil)
+	writer := &cancelingBlobWriter{header: make(http.Header), err: errors.New("broken downstream")}
+	proxy.cacheBlob(writer, request, &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body))}, make(http.Header), make(http.Header), "key", digest)
+	if proxy.stats.clientCanceled.Load() != 0 || proxy.stats.errors.Load() != 1 {
+		t.Fatalf("canceled=%d errors=%d", proxy.stats.clientCanceled.Load(), proxy.stats.errors.Load())
 	}
 }
 

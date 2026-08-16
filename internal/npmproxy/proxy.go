@@ -248,18 +248,23 @@ func (p *Proxy) serveMiss(
 	if cacheable {
 		metadata := cache.Metadata{Status: response.StatusCode, Header: cacheHeaders}
 		if err := p.store.PutStream(key, metadata, response.Body, writer); err != nil {
-			p.logger.Warn(
-				"cache stream failed",
-				"repository", p.name,
-				"upstream", httppolicy.PublicUpstreamURL(target),
-				"error", err,
-			)
+			p.recordStreamError(request, "cache stream failed", err)
 		}
 		return
 	}
 	if _, err := io.Copy(writer, response.Body); err != nil {
 		p.logger.Debug("proxy stream failed", "repository", p.name, "error", err)
 	}
+}
+
+func (p *Proxy) recordStreamError(request *http.Request, message string, err error) {
+	if errors.Is(err, context.Canceled) || errors.Is(request.Context().Err(), context.Canceled) {
+		p.stats.clientCanceled.Add(1)
+		p.logger.Debug("client canceled stream", "repository", p.name, "method", request.Method, "path", request.URL.Path)
+		return
+	}
+	p.stats.errors.Add(1)
+	p.logger.Warn(message, "repository", p.name, "error", httppolicy.SafeError(err))
 }
 
 func (p *Proxy) serveMetadata(

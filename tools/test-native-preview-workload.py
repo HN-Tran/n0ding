@@ -30,9 +30,11 @@ class EvidenceTest(unittest.TestCase):
     before_rel=f"out/{r}-{eco}-before.json"; after_rel=f"out/{r}-{eco}-after.json"
     kind="pypi" if eco in ("pip","uv") else eco
     (self.root/before_rel).write_text(json.dumps({"repositories":[{"type":kind,"cache_hits":0}]})); (self.root/after_rel).write_text(json.dumps({"repositories":[{"type":kind,"cache_hits":0 if r==1 else 1}]}))
-    pre_rel=f"out/{r}-{eco}-pre.json"; (self.root/pre_rel).write_text(json.dumps({"identity":f"{eco}-{r}","entries":[]}))
+    pre_rel=f"out/{r}-{eco}-pre.json"; pre={"identity":f"{eco}-{r}","entries":[]}
+    if eco=="oci": pre.update({"proxy_reference":"library/alpine:3.20","proxy_image_present":False,"retained_layer_blobs_allowed":True})
+    (self.root/pre_rel).write_text(json.dumps(pre))
     command_rel=f"out/{r}-{eco}-command.json"
-    argv={"npm":["npm","ci"],"pip":["pip","install","idna==3.10"],"uv":["uv","pip","install","idna==3.10"],"oci":["docker","pull","library/alpine:3.20"]}[eco]
+    argv={"npm":["npm","ci"],"pip":["pip","install","--index-url","http://cache.test/pypi/simple/","--trusted-host","cache.test","idna==3.10"],"uv":["uv","pip","install","idna==3.10"],"oci":["docker","pull","library/alpine:3.20"]}[eco]
     command={"argv":argv}
     if eco=="npm": command["fixture_sha256"]=__import__('hashlib').sha256((MODULE_PATH.parent.parent/V.TARGETS["npm"]).read_bytes()).hexdigest()
     (self.root/command_rel).write_text(json.dumps(command))
@@ -42,17 +44,21 @@ class EvidenceTest(unittest.TestCase):
     if r==3: event["restart"]={"index":1,"pid":22,"start":"start-22"}
     self.events.append(event)
   for stage,code in (("attempt",28),("retry",0)):
-   event={"kind":"failure_path","path":"cancellation","stage":stage,"started_epoch_ms":3000,"ended_epoch_ms":4000,"exit_code":code,"terminated":stage=="attempt","ecosystem":"pip","object":"idna==3.10","integrity":{"algorithm":"sha256","value":__import__('hashlib').sha256(b'idna-file').hexdigest()}}
-   for field in ("output_artifact","before_metrics_artifact","after_metrics_artifact"):
+   wheel_bytes=b'pip-25.2-wheel'; wheel_digest=__import__('hashlib').sha256(wheel_bytes).hexdigest()
+   event={"kind":"failure_path","path":"cancellation","stage":stage,"started_epoch_ms":3000,"ended_epoch_ms":4000,"exit_code":code,"terminated":stage=="attempt","ecosystem":"pip","object":"pip==25.2","integrity":{"algorithm":"sha256","value":wheel_digest}}
+   if stage=="attempt": event["admission_epoch_ms"]=3500
+   fields=["output_artifact","before_metrics_artifact","after_metrics_artifact"]+(["admission_metrics_artifact"] if stage=="attempt" else [])
+   for field in fields:
     rel=f"out/cancel-{stage}-{field}.txt"
     if "metrics" in field:
-     canceled=0 if field.startswith("before") else (1 if stage=="attempt" else 1)
-     value={"status":{"repositories":[{"type":"pypi","client_canceled":canceled},{"type":"npm","client_canceled":0}]},"metrics":"n0ding_storage_reserved_bytes 0\n","cache_files":[],"cache_metadata":[]}; (self.root/rel).write_text(json.dumps(value))
+     canceled=0 if field.startswith(("before","admission")) else (1 if stage=="attempt" else 1)
+     committed=(stage=="retry" and field.startswith("after")); reserved=1 if field.startswith("admission") else 0
+     value={"status":{"repositories":[{"type":"pypi","client_canceled":canceled},{"type":"npm","client_canceled":0}]},"metrics":f"n0ding_storage_reserved_bytes {reserved}\n","cache_files":[],"cache_metadata":[{"content_digest":"sha256:"+wheel_digest}] if committed else []}; (self.root/rel).write_text(json.dumps(value))
     else: (self.root/rel).write_text(rel)
     import hashlib; event[field]=rel; event[field+"_sha256"]=hashlib.sha256((self.root/rel).read_bytes()).hexdigest()
    self.events.append(event)
    if stage=="retry":
-    for field,value in (("integrity_artifact",b'idna-file'),("command_artifact",json.dumps({"argv":["pip","install","idna==3.10"]}).encode())):
+    for field,value in (("integrity_artifact",wheel_bytes),("command_artifact",json.dumps({"argv":["python","-m","pip","download","--index-url","http://cache.test/pypi/simple/","--trusted-host","cache.test","pip==25.2"]}).encode())):
      rel=f"out/cancel-retry-{field}"; (self.root/rel).write_bytes(value); event[field]=rel; event[field+"_sha256"]=__import__('hashlib').sha256(value).hexdigest()
   self.ledger=[{"index":1,"pid":22,"start":"start-22"}]
  def tearDown(self): self.tmp.cleanup()
@@ -89,6 +95,28 @@ class EvidenceTest(unittest.TestCase):
    event=events[-2]; p=self.root/event["after_metrics_artifact"]; raw=json.loads(p.read_text()); raw["status"]["repositories"][0]["client_canceled"]=0; raw["status"]["repositories"][1]["client_canceled"]=1; p.write_text(json.dumps(raw)); event["after_metrics_artifact_sha256"]=__import__('hashlib').sha256(p.read_bytes()).hexdigest()
   self.reject(mutate,"client_canceled did not increase")
  def test_cancellation_retry_integrity_mismatch(self): self.reject(lambda e:e[-1]["integrity"].update(value="0"*64),"fabricated pip integrity")
+ def test_wrong_fixed_cancellation_target(self): self.reject(lambda e:(e[-2].update(object="idna==3.10"),e[-1].update(object="idna==3.10")),"wrong fixed")
+ def test_wrong_cancellation_retry_command(self):
+  def mutate(events):
+   event=events[-1]; p=self.root/event["command_artifact"]; p.write_text(json.dumps({"argv":["python","-m","pip","download","idna==3.10"]})); event["command_artifact_sha256"]=__import__('hashlib').sha256(p.read_bytes()).hexdigest()
+  self.reject(mutate,"fixed pip==25.2")
+ def test_pip_rejects_arbitrary_trusted_host(self):
+  def mutate(events):
+   event=events[1]; p=self.root/event["command_artifact"]; value=json.loads(p.read_text()); value["argv"][value["argv"].index("cache.test")]="evil.example"; p.write_text(json.dumps(value)); event["command_artifact_sha256"]=__import__('hashlib').sha256(p.read_bytes()).hexdigest()
+  self.reject(mutate,"exactly match")
+ def test_pip_rejects_duplicate_trust_flags(self):
+  def mutate(events):
+   event=events[1]; p=self.root/event["command_artifact"]; value=json.loads(p.read_text()); value["argv"][2:2]=["--index-url","http://evil.example/simple/","--trusted-host","evil.example"]; p.write_text(json.dumps(value)); event["command_artifact_sha256"]=__import__('hashlib').sha256(p.read_bytes()).hexdigest()
+  self.reject(mutate,"exactly one")
+ def test_cancellation_target_was_already_cached(self):
+  def mutate(events):
+   event=events[-2]; p=self.root/event["before_metrics_artifact"]; raw=json.loads(p.read_text()); raw["cache_metadata"]=[{"content_digest":"sha256:"+event["integrity"]["value"]}]; p.write_text(json.dumps(raw)); event["before_metrics_artifact_sha256"]=__import__('hashlib').sha256(p.read_bytes()).hexdigest()
+  self.reject(mutate,"cold uncommitted")
+ def test_cancellation_killed_before_admission(self):
+  def mutate(events):
+   event=events[-2]; p=self.root/event["admission_metrics_artifact"]; raw=json.loads(p.read_text()); raw["metrics"]="n0ding_storage_reserved_bytes 0\n"; p.write_text(json.dumps(raw)); event["admission_metrics_artifact_sha256"]=__import__('hashlib').sha256(p.read_bytes()).hexdigest()
+  self.reject(mutate,"before in-flight admission")
+ def test_fabricated_admission_timestamp(self): self.reject(lambda e:e[-2].update(admission_epoch_ms=2999),"outside attempt")
  def test_npm_wrong_self_consistent_artifact(self):
   def mutate(events):
    event=events[0]; p=self.root/event["integrity_artifact"]; value={"version":"7.0.1","resolved":"x","integrity":"sha512-"+__import__('base64').b64encode(b'x'*64).decode()}; p.write_text(json.dumps(value)); event["integrity"]["value"]=value["integrity"]; event["integrity_artifact_sha256"]=__import__('hashlib').sha256(p.read_bytes()).hexdigest()
@@ -101,6 +129,7 @@ class EvidenceTest(unittest.TestCase):
   events=copy.deepcopy(self.events); event=events[3]
   command_path=self.root/event["command_artifact"]
   command={"argv":["docker","pull","registry.example:5000/library/alpine:3.20"]}; command_path.write_text(json.dumps(command)); event["command_artifact_sha256"]=__import__('hashlib').sha256(command_path.read_bytes()).hexdigest()
+  pre_path=self.root/event["cache_prestate_artifact"]; pre=json.loads(pre_path.read_text()); pre["proxy_reference"]="registry.example:5000/library/alpine:3.20"; pre_path.write_text(json.dumps(pre)); event["cache_prestate_artifact_sha256"]=__import__('hashlib').sha256(pre_path.read_bytes()).hexdigest()
   inspect_path=self.root/event["integrity_artifact"]
   inspect_path.write_text(json.dumps({"RepoDigests":["registry.example:5000/library/alpine@"+event["integrity"]["value"]]})); event["integrity_artifact_sha256"]=__import__('hashlib').sha256(inspect_path.read_bytes()).hexdigest()
   V.validate(events,str(self.root),3,1,self.ledger)

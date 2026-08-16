@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,6 +30,71 @@ func TestClientCancellationIsNotCountedAsRepositoryError(t *testing.T) {
 
 	if canceled, failures := proxy.stats.clientCanceled.Load(), proxy.stats.errors.Load(); canceled != 1 || failures != 0 {
 		t.Fatalf("client_canceled=%d errors=%d", canceled, failures)
+	}
+}
+
+type cancelingTarballWriter struct {
+	header http.Header
+	cancel context.CancelFunc
+	err    error
+}
+
+func (w *cancelingTarballWriter) Header() http.Header { return w.header }
+func (w *cancelingTarballWriter) WriteHeader(int)     {}
+func (w *cancelingTarballWriter) Write([]byte) (int, error) {
+	if w.cancel != nil {
+		w.cancel()
+	}
+	return 0, w.err
+}
+
+func TestServeMissClassifiesStreamCancellationAndCleansCache(t *testing.T) {
+	root := t.TempDir()
+	store, err := cache.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("tarball"))}, nil
+	})}
+	proxy := &Proxy{name: "npm", store: store, client: client, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	ctx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, "http://n0ding.test/npm/x.tgz", nil).WithContext(ctx)
+	target, _ := url.Parse("https://registry.example/x.tgz")
+	proxy.serveMiss(&cancelingTarballWriter{header: make(http.Header), cancel: cancel, err: context.Canceled}, request, target, "key", true)
+	if proxy.stats.clientCanceled.Load() != 1 || proxy.stats.errors.Load() != 0 {
+		t.Fatalf("canceled=%d errors=%d", proxy.stats.clientCanceled.Load(), proxy.stats.errors.Load())
+	}
+	if size, objects, err := store.Size(); err != nil || size != 0 || objects != 0 {
+		t.Fatalf("cache=%d/%d err=%v", size, objects, err)
+	}
+	assertNoTarballCacheFiles(t, root)
+}
+
+func assertNoTarballCacheFiles(t *testing.T, root string) {
+	t.Helper()
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			t.Errorf("unexpected cache file %s", path)
+		}
+		return nil
+	})
+}
+
+func TestServeMissClassifiesNonCancellationStreamError(t *testing.T) {
+	store, _ := cache.New(t.TempDir())
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("tarball"))}, nil
+	})}
+	proxy := &Proxy{name: "npm", store: store, client: client, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	request := httptest.NewRequest(http.MethodGet, "http://n0ding.test/npm/x.tgz", nil)
+	target, _ := url.Parse("https://registry.example/x.tgz")
+	proxy.serveMiss(&cancelingTarballWriter{header: make(http.Header), err: errors.New("broken downstream")}, request, target, "key", true)
+	if proxy.stats.clientCanceled.Load() != 0 || proxy.stats.errors.Load() != 1 {
+		t.Fatalf("canceled=%d errors=%d", proxy.stats.clientCanceled.Load(), proxy.stats.errors.Load())
 	}
 }
 
