@@ -208,15 +208,18 @@ func TestProxyRewritesAndCachesSimpleHTMLAndHashedFile(t *testing.T) {
 }
 
 func TestProxyRewritesSimpleJSON(t *testing.T) {
+	body := []byte("sdist bytes")
+	digest := sha256.Sum256(body)
+	sha := hex.EncodeToString(digest[:])
 	var fileURL string
 	files := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		_, _ = writer.Write([]byte("sdist bytes"))
+		_, _ = writer.Write(body)
 	}))
 	defer files.Close()
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/vnd.pypi.simple.v1+json")
-		fmt.Fprintf(writer, `{"meta":{"api-version":"1.0"},"files":[{"filename":"tiny.tar.gz","url":%q}]}`, fileURL)
+		fmt.Fprintf(writer, `{"meta":{"api-version":"1.0"},"files":[{"filename":"tiny.tar.gz","url":%q,"hashes":{"sha256":%q}}]}`, fileURL, sha)
 	}))
 	defer upstream.Close()
 	fileURL = files.URL + "/packages/tiny.tar.gz"
@@ -235,6 +238,76 @@ func TestProxyRewritesSimpleJSON(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), "http://packages.test/pypi/files/tiny.tar.gz?") {
 		t.Fatalf("JSON URL was not rewritten: %s", response.Body.String())
+	}
+	var simple struct {
+		Files []struct {
+			URL string `json:"url"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &simple); err != nil || len(simple.Files) != 1 {
+		t.Fatalf("invalid rewritten JSON: %v body=%s", err, response.Body.String())
+	}
+	rewritten, err := url.Parse(simple.Files[0].URL)
+	if err != nil || rewritten.Query().Get("sha256") != sha {
+		t.Fatalf("JSON URL does not bind sha256: %v url=%s", err, simple.Files[0].URL)
+	}
+	target, expectedSHA256, err := proxy.fileTargetURL(rewritten)
+	if err != nil {
+		t.Fatalf("rewritten JSON file URL is invalid: %v url=%s", err, simple.Files[0].URL)
+	}
+	fileResponse := httptest.NewRecorder()
+	fileRequest := httptest.NewRequest(http.MethodGet, rewritten.RequestURI(), nil)
+	proxy.ServeHTTP(fileResponse, fileRequest)
+	if fileResponse.Code != http.StatusOK || !bytes.Equal(fileResponse.Body.Bytes(), body) {
+		t.Fatalf("rewritten JSON file url=%s status=%d body=%q", simple.Files[0].URL, fileResponse.Code, fileResponse.Body.String())
+	}
+	entry, found, err := proxy.store.Lookup(proxy.cacheKey("file", target, "", expectedSHA256), time.Hour)
+	if err != nil || !found {
+		t.Fatalf("JSON file cache entry found=%v err=%v", found, err)
+	}
+	defer entry.Close()
+	if want := "sha256:" + sha; entry.Metadata.ContentDigest != want {
+		t.Fatalf("content digest = %q, want %q", entry.Metadata.ContentDigest, want)
+	}
+}
+
+func TestJSONHashInjectionPreservesNonProxyAndConflictingURLs(t *testing.T) {
+	files := httptest.NewServer(http.NotFoundHandler())
+	defer files.Close()
+	upstream := httptest.NewServer(http.NotFoundHandler())
+	defer upstream.Close()
+	proxy, err := newTestProxy(t, upstream.URL, files.URL, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pageURL, _ := url.Parse(upstream.URL + "/simple/tiny/")
+	valid := strings.Repeat("b", 64)
+	tests := []struct {
+		name   string
+		raw    string
+		hashes any
+	}{
+		{name: "disallowed origin", raw: "https://evil.example/pkg.whl#foo", hashes: map[string]any{"sha256": valid}},
+		{name: "mailto", raw: "mailto:security@example.test", hashes: map[string]any{"sha256": valid}},
+		{name: "data", raw: "data:text/plain,package", hashes: map[string]any{"sha256": valid}},
+		{name: "conflicting hash", raw: files.URL + "/pkg.whl#sha256=" + strings.Repeat("a", 64), hashes: map[string]any{"sha256": valid}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value := map[string]any{"url": test.raw, "hashes": test.hashes}
+			proxy.rewriteJSONValue(value, pageURL)
+			if got := value["url"]; got != test.raw {
+				t.Fatalf("url changed: got %q want %q", got, test.raw)
+			}
+		})
+	}
+	for _, hashes := range []any{map[string]any{"sha256": "not-a-digest"}, map[string]any{"sha256": 42}} {
+		value := map[string]any{"url": files.URL + "/pkg.whl", "hashes": hashes}
+		proxy.rewriteJSONValue(value, pageURL)
+		rewritten, err := url.Parse(value["url"].(string))
+		if err != nil || rewritten.Query().Get("sha256") != "" {
+			t.Fatalf("invalid hash was injected: err=%v url=%s", err, value["url"])
+		}
 	}
 }
 
@@ -267,6 +340,45 @@ func TestProxyServesPEP658MetadataSidecar(t *testing.T) {
 	}
 	if requestedPath != "/packages/tiny-1.0.0-py3-none-any.whl.metadata" {
 		t.Fatalf("metadata upstream path = %q", requestedPath)
+	}
+}
+
+func TestProxyServesPEP658MetadataAppendedAfterQueryURL(t *testing.T) {
+	metadataBody := []byte("Metadata-Version: 2.1\nName: tiny\nVersion: 1.0.0\n")
+	var requestedPath string
+	files := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requestedPath = request.URL.Path
+		_, _ = writer.Write(metadataBody)
+	}))
+	defer files.Close()
+	upstream := httptest.NewServer(http.NotFoundHandler())
+	defer upstream.Close()
+	proxy, err := newTestProxy(t, upstream.URL, files.URL, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	distributionURL := "http://n0ding.test/pypi/files/tiny-1.0.0-py3-none-any.whl?sha256=" +
+		strings.Repeat("0", 64) + "&url=" + urlQueryEscape(files.URL+"/packages/tiny-1.0.0-py3-none-any.whl")
+	metadataURL := distributionURL + ".metadata"
+	for attempt := 0; attempt < 2; attempt++ {
+		response := httptest.NewRecorder()
+		proxy.ServeHTTP(response, httptest.NewRequest(http.MethodGet, metadataURL, nil))
+		if response.Code != http.StatusOK || !bytes.Equal(response.Body.Bytes(), metadataBody) {
+			t.Fatalf("attempt %d: status=%d body=%q", attempt+1, response.Code, response.Body.String())
+		}
+		wantCache := "MISS"
+		if attempt == 1 {
+			wantCache = "HIT"
+		}
+		if got := response.Header().Get("X-N0ding-Cache"); got != wantCache {
+			t.Fatalf("attempt %d: cache=%q want=%q", attempt+1, got, wantCache)
+		}
+	}
+	if requestedPath != "/packages/tiny-1.0.0-py3-none-any.whl.metadata" {
+		t.Fatalf("metadata upstream path = %q", requestedPath)
+	}
+	if proxy.stats.errors.Load() != 0 {
+		t.Fatalf("errors = %d", proxy.stats.errors.Load())
 	}
 }
 

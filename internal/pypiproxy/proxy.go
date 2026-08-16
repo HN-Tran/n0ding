@@ -365,9 +365,10 @@ func (p *Proxy) fileTargetURL(requestURL *url.URL) (*url.URL, string, error) {
 	if !p.fileOriginAllowed(target) {
 		return nil, "", errors.New("file origin is not allowed")
 	}
-	metadataRequest := strings.HasSuffix(path.Base(requestURL.Path), ".metadata") &&
-		!strings.HasSuffix(path.Base(target.Path), ".metadata")
-	if metadataRequest {
+	proxyMetadataRequest := strings.HasSuffix(path.Base(requestURL.Path), ".metadata")
+	targetMetadataRequest := strings.HasSuffix(path.Base(target.Path), ".metadata")
+	metadataRequest := proxyMetadataRequest || targetMetadataRequest
+	if proxyMetadataRequest && !targetMetadataRequest {
 		// PEP 658/714 clients form the metadata sidecar URL by appending
 		// `.metadata` to the distribution link. The original upstream URL is
 		// carried in our query string, so mirror that suffix onto the target.
@@ -587,10 +588,16 @@ func (p *Proxy) rewriteSimple(body []byte, contentType string, pageURL *url.URL)
 func (p *Proxy) rewriteJSONValue(value any, pageURL *url.URL) {
 	switch typed := value.(type) {
 	case map[string]any:
+		sha := ""
+		if hashes, ok := typed["hashes"].(map[string]any); ok {
+			if raw, ok := hashes["sha256"].(string); ok {
+				sha = sha256FromFragment("sha256=" + raw)
+			}
+		}
 		for key, nested := range typed {
 			if strings.EqualFold(key, "url") {
 				if raw, ok := nested.(string); ok {
-					typed[key] = p.rewriteHref(raw, pageURL)
+					typed[key] = p.rewriteJSONHref(raw, sha, pageURL)
 					continue
 				}
 			}
@@ -601,6 +608,33 @@ func (p *Proxy) rewriteJSONValue(value any, pageURL *url.URL) {
 			p.rewriteJSONValue(nested, pageURL)
 		}
 	}
+}
+
+func (p *Proxy) rewriteJSONHref(raw, sha string, pageURL *url.URL) string {
+	if sha == "" {
+		return p.rewriteHref(raw, pageURL)
+	}
+	link, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return p.rewriteHref(raw, pageURL)
+	}
+	resolved := pageURL.ResolveReference(link)
+	if !p.fileOriginAllowed(resolved) {
+		return p.rewriteHref(raw, pageURL)
+	}
+	existing := sha256FromFragment(resolved.Fragment)
+	if existing != "" && existing != sha {
+		return raw
+	}
+	fragment, err := url.ParseQuery(link.Fragment)
+	if err != nil {
+		fragment = make(url.Values)
+	}
+	if existing == "" {
+		fragment.Set("sha256", sha)
+		link.Fragment = fragment.Encode()
+	}
+	return p.rewriteHref(link.String(), pageURL)
 }
 
 func (p *Proxy) rewriteHTMLNode(node *html.Node, pageURL *url.URL) {
