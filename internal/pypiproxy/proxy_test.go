@@ -62,7 +62,7 @@ func TestStreamResponseClassifiesCancellationAndCleansCache(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "http://n0ding.test/pypi/files/x.whl", nil).WithContext(ctx)
 	writer := &cancelingStreamWriter{header: make(http.Header), cancel: cancel, err: context.Canceled}
 	response := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("wheel bytes"))}
-	proxy.streamResponse(writer, request, response, make(http.Header), make(http.Header), "key", true, nil)
+	proxy.streamResponse(writer, request, response, make(http.Header), make(http.Header), "key", true, "", nil)
 	if proxy.stats.clientCanceled.Load() != 1 || proxy.stats.errors.Load() != 0 {
 		t.Fatalf("canceled=%d errors=%d", proxy.stats.clientCanceled.Load(), proxy.stats.errors.Load())
 	}
@@ -90,7 +90,7 @@ func TestStreamResponseClassifiesNonCancellationError(t *testing.T) {
 	proxy := &Proxy{name: "pypi", store: store, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	request := httptest.NewRequest(http.MethodGet, "http://n0ding.test/pypi/files/x.whl", nil)
 	writer := &cancelingStreamWriter{header: make(http.Header), err: errors.New("broken downstream")}
-	proxy.streamResponse(writer, request, &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("wheel"))}, make(http.Header), make(http.Header), "key", true, nil)
+	proxy.streamResponse(writer, request, &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("wheel"))}, make(http.Header), make(http.Header), "key", true, "", nil)
 	if proxy.stats.clientCanceled.Load() != 0 || proxy.stats.errors.Load() != 1 {
 		t.Fatalf("canceled=%d errors=%d", proxy.stats.clientCanceled.Load(), proxy.stats.errors.Load())
 	}
@@ -177,6 +177,23 @@ func TestProxyRewritesAndCachesSimpleHTMLAndHashedFile(t *testing.T) {
 		if got := response.Header().Get("X-N0ding-Cache"); got != wantCache {
 			t.Fatalf("file attempt %d: cache = %q, want %q", attempt+1, got, wantCache)
 		}
+	}
+	requestURL := strings.Split(fileURL, "#")[0]
+	parsed, err := url.Parse(requestURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, expectedSHA256, err := proxy.fileTargetURL(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, found, err := proxy.store.Lookup(proxy.cacheKey("file", target, "", expectedSHA256), time.Hour)
+	if err != nil || !found {
+		t.Fatalf("verified file cache entry found=%v err=%v", found, err)
+	}
+	defer entry.Close()
+	if want := "sha256:" + sha; entry.Metadata.ContentDigest != want {
+		t.Fatalf("content digest = %q, want %q", entry.Metadata.ContentDigest, want)
 	}
 
 	if simpleRequests.Load() != 1 {

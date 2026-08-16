@@ -420,7 +420,7 @@ func (p *Proxy) serveSimpleMiss(
 	cacheHeaders := httppolicy.CacheMetadataHeaders(headers)
 
 	if !isHTML(response.Header.Get("Content-Type")) && !isJSON(response.Header.Get("Content-Type")) {
-		p.streamResponse(writer, request, response, headers, cacheHeaders, key, cacheable, nil)
+		p.streamResponse(writer, request, response, headers, cacheHeaders, key, cacheable, "", nil)
 		return
 	}
 
@@ -495,7 +495,11 @@ func (p *Proxy) serveFileMiss(
 			}
 		}
 	}
-	p.streamResponse(writer, request, response, headers, cacheHeaders, key, cacheable, verifier)
+	contentDigest := ""
+	if expectedSHA256 != "" {
+		contentDigest = "sha256:" + expectedSHA256
+	}
+	p.streamResponse(writer, request, response, headers, cacheHeaders, key, cacheable, contentDigest, verifier)
 }
 
 func (p *Proxy) streamResponse(
@@ -506,6 +510,7 @@ func (p *Proxy) streamResponse(
 	cacheHeaders http.Header,
 	key string,
 	cacheable bool,
+	contentDigest string,
 	verifierFactory func(hash.Hash) func(int64) error,
 ) {
 	httppolicy.CopyHeaders(writer.Header(), headers)
@@ -521,7 +526,7 @@ func (p *Proxy) streamResponse(
 			source = io.NopCloser(io.TeeReader(response.Body, hasher))
 			verifier = verifierFactory(hasher)
 		}
-		metadata := cache.Metadata{Status: response.StatusCode, Header: cacheHeaders}
+		metadata := cache.Metadata{Status: response.StatusCode, Header: cacheHeaders, ContentDigest: contentDigest}
 		if err := p.store.PutStreamVerified(key, metadata, source, writer, verifier); err != nil {
 			p.recordStreamError(request, "cache PyPI body failed", err)
 		}
