@@ -31,15 +31,32 @@ hit deltas.
 The workload hook receives base URL, snapshot directory, evidence root,
 one-based round, and phase. It appends one receipt per client invocation to
 `workload-events.jsonl`. Each receipt binds round/phase, ecosystem, client and
-version, fresh client-cache identity, start/end epoch milliseconds, exit code,
-output artifact and SHA-256, integrity algorithm/value, and before/after cache
-hits. Post-restart receipts additionally bind the runner restart-ledger index,
-PID, and process-start value. Client intervals must overlap in every phase.
+version, the fixed target, fresh client-cache identity, start/end epoch
+milliseconds, exit code, output, integrity, and before/after status. Every raw
+artifact is named relative to the evidence root and SHA-256 bound. A single
+central per-round launch ledger binds all four process intervals and exit
+codes; an empty-cache prestate artifact proves each client cache is new. The
+validator derives cache-hit deltas from raw status JSON, verifies npm integrity
+against the exact committed lock object, recomputes Python installed-file
+hashes, and derives the OCI digest from raw `docker image inspect` JSON.
+Post-restart receipts additionally bind
+the runner restart-ledger index, PID, and process-start value. Client intervals
+must overlap in every phase.
 
 The hook also appends an ordered cancellation attempt and successful retry,
-each with output and before/after metrics artifacts plus SHA-256. The canceled
+each with output and raw before/after status, Prometheus text, cache-file and
+metadata inventories plus SHA-256. The validator derives cancellation and
+reservation deltas and temp/orphan counts rather than trusting summaries. The canceled
 cacheable transfer must leave no committed partial, persistent temp, orphan,
 or corrupt object. Synthetic DNS disruption is not a Public Preview gate.
+
+For npm, the evidence must contain the exact `is-number@7.0.0` lock object from
+the committed compatibility lockfile; a different self-consistent lock object
+is rejected. OCI RepoDigests must name the same proxy reference passed to
+`docker pull`, not merely contain the claimed digest. Cancellation counters are
+read only from the repository type targeted by the canceled request. The retry
+has its own hashed integrity artifact, which is recomputed; a boolean success
+claim is not evidence.
 
 The repository validates the hook contract but cannot supply the deployment-
 specific Docker endpoint. The adapter must be reviewed with the final host

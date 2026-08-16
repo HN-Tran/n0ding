@@ -3,6 +3,7 @@
 import argparse, base64, hashlib, json, os, re, sys
 
 ECOSYSTEMS = ("npm", "pip", "uv", "oci")
+TARGETS = {"npm":"testdata/npm-compat/package-lock.json", "pip":"idna==3.10", "uv":"idna==3.10", "oci":"library/alpine:3.20"}
 
 def fail(message): raise ValueError(message)
 def integer(value, label, minimum=0):
@@ -14,6 +15,34 @@ def artifact(root, event, field):
     if os.path.commonpath((root,path)) != root or not os.path.isfile(path): fail(f"missing {field}: {rel}")
     with open(path,"rb") as source: actual=hashlib.sha256(source.read()).hexdigest()
     if digest != actual: fail(f"{field} hash mismatch")
+    return path
+def json_artifact(root,event,field):
+    with open(artifact(root,event,field),encoding="utf-8") as source: return json.load(source)
+def status_hits(root,event,field,ecosystem):
+    value=json_artifact(root,event,field); kind="pypi" if ecosystem in ("pip","uv") else ecosystem
+    matches=[r for r in value.get("repositories",[]) if r.get("type")==kind]
+    if len(matches)!=1: fail(f"{field} missing {kind} repository")
+    integer(matches[0].get("cache_hits"),f"{field}.cache_hits"); return matches[0]["cache_hits"]
+def launch(root,event):
+    value=json_artifact(root,event,"launch_artifact")
+    row=value.get(event.get("ecosystem")) if isinstance(value,dict) else None
+    if not isinstance(row,dict): fail("launch ledger missing ecosystem")
+    for field in ("started_epoch_ms","ended_epoch_ms","exit_code"): integer(row.get(field),f"launch.{field}",1 if field!="exit_code" else 0)
+    return row
+def command(root,event,ecosystem):
+    value=json_artifact(root,event,"command_artifact"); argv=value.get("argv") if isinstance(value,dict) else None
+    if not isinstance(argv,list) or not all(isinstance(x,str) and x for x in argv): fail("invalid raw command argv")
+    required={"npm":("npm","ci"),"pip":("pip","install","idna==3.10"),"uv":("uv","pip","install","idna==3.10"),"oci":("docker","pull","library/alpine:3.20")}[ecosystem]
+    position=0
+    for token in argv:
+        wanted=required[position] if position<len(required) else None
+        if wanted is not None and (token==wanted or (wanted=="pip" and token.endswith("/pip")) or (wanted=="library/alpine:3.20" and token.endswith("/"+wanted))): position+=1
+    if position!=len(required): fail(f"command does not bind required {ecosystem} target")
+    if ecosystem=="npm":
+        fixture=os.path.join(os.path.dirname(os.path.dirname(__file__)),TARGETS["npm"])
+        with open(fixture,"rb") as source: expected=hashlib.sha256(source.read()).hexdigest()
+        if value.get("fixture_sha256")!=expected: fail("npm command does not bind committed lock fixture")
+    return argv
 def interval(event):
     integer(event.get("started_epoch_ms"),"started_epoch_ms",1); integer(event.get("ended_epoch_ms"),"ended_epoch_ms",1)
     if event["ended_epoch_ms"] < event["started_epoch_ms"]: fail("negative event interval")
@@ -32,12 +61,47 @@ def integrity(event, ecosystem):
     elif ecosystem=="oci":
         if algorithm!="oci-repo-digest" or not isinstance(digest,str) or not re.fullmatch(r"sha256:[0-9a-f]{64}",digest): fail("invalid OCI RepoDigest")
     return digest
+def recompute_integrity(root,event,ecosystem):
+    claimed=integrity(event,ecosystem)
+    if ecosystem=="oci":
+        value=json_artifact(root,event,"integrity_artifact")
+        refs=value.get("RepoDigests")
+        if not isinstance(refs,list): fail("invalid OCI inspect evidence")
+        argv=command(root,event,ecosystem); pulled=argv[-1]
+        head,sep,tail=pulled.rpartition("/")
+        if ":" in tail: tail=tail.rsplit(":",1)[0]
+        canonical_repo=(head+sep+tail) if sep else tail
+        digests=[x.rsplit("@",1)[1] for x in refs if isinstance(x,str) and x.startswith(canonical_repo+"@")]
+        if claimed not in digests: fail("OCI integrity not present in inspect evidence")
+    elif ecosystem=="npm":
+        value=json_artifact(root,event,"integrity_artifact")
+        fixture=os.path.join(os.path.dirname(os.path.dirname(__file__)),TARGETS["npm"])
+        with open(fixture,encoding="utf-8") as source: locked=json.load(source)["packages"]["node_modules/is-number"]
+        exact={key:locked[key] for key in ("version","resolved","integrity")}
+        if value!=exact or value.get("version")!="7.0.0" or claimed!=exact["integrity"]: fail("npm integrity does not bind exact committed is-number@7.0.0 lock object")
+    else:
+        path=artifact(root,event,"integrity_artifact")
+        algorithm="sha512" if ecosystem=="npm" else "sha256"
+        h=hashlib.new(algorithm)
+        with open(path,"rb") as source:
+            for chunk in iter(lambda:source.read(1024*1024),b""): h.update(chunk)
+        actual="sha512-"+base64.b64encode(h.digest()).decode() if ecosystem=="npm" else h.hexdigest()
+        if claimed!=actual: fail(f"fabricated {ecosystem} integrity")
+    return claimed
 def metrics(root,event,field):
-    artifact(root,event,field)
-    with open(os.path.join(root,event[field]),encoding="utf-8") as source: value=json.load(source)
-    for name in ("client_canceled","temp_files","orphan_bodies","reservations"):
-        integer(value.get(name),f"{field}.{name}")
-    return value
+    raw=json_artifact(root,event,field)
+    status=raw.get("status"); prometheus=raw.get("metrics"); files=raw.get("cache_files")
+    if not isinstance(status,dict) or not isinstance(prometheus,str) or not isinstance(files,list): fail(f"invalid raw {field}")
+    kind="pypi" if event.get("ecosystem") in ("pip","uv") else event.get("ecosystem")
+    repos=[repo for repo in status.get("repositories",[]) if repo.get("type")==kind]
+    if len(repos)!=1: fail(f"{field} missing cancellation target repository")
+    integer(repos[0].get("client_canceled"),f"{field}.client_canceled"); canceled=repos[0]["client_canceled"]
+    match=re.search(r"^n0ding_storage_reserved_bytes ([0-9]+)$",prometheus,re.M)
+    if not match: fail(f"{field} missing reservation metric")
+    temps=sum(1 for p in files if isinstance(p,str) and os.path.basename(p).startswith((".body-",".metadata-")))
+    bodies={p for p in files if isinstance(p,str) and re.search(r"/[0-9a-f]{64}\.body(?:\..+)?$","/"+p)}
+    refs={x.get("body") for x in raw.get("cache_metadata",[]) if isinstance(x,dict) and isinstance(x.get("body"),str)}
+    return {"client_canceled":canceled,"temp_files":temps,"orphan_bodies":len(bodies-refs),"reservations":int(int(match.group(1))!=0)}
 def load(path):
     events=[]
     with open(path,encoding="utf-8") as source:
@@ -73,15 +137,20 @@ def validate(events, root, rounds, restarts, ledger):
         if key not in expected or key in actual: fail(f"unexpected/duplicate client event {key}")
         actual.add(key); phase=expected_phase(r,rounds,restarts)
         if event.get("phase") != phase: fail(f"wrong phase for round {r}")
+        if event.get("target") != TARGETS[eco]: fail(f"wrong target for {eco}")
+        command(root,event,eco)
         for field in ("client","client_version","cache_identity"):
             if not isinstance(event.get(field),str) or not event[field]: fail(f"missing {field}")
-        integer(event.get("exit_code"),"exit_code");
+        integer(event.get("exit_code"),"exit_code"); row=launch(root,event)
+        if any(event.get(k)!=row.get(k) for k in ("started_epoch_ms","ended_epoch_ms","exit_code")): fail("event interval/exit does not match launch ledger")
         if event["exit_code"] != 0: fail("client exit was nonzero")
         interval(event); artifact(root,event,"output_artifact")
-        for field in ("hits_before","hits_after"):
-            integer(event.get(field),field)
+        before=status_hits(root,event,"status_before_artifact",eco); after=status_hits(root,event,"status_after_artifact",eco)
+        if event.get("hits_before")!=before or event.get("hits_after")!=after: fail("fabricated cache hit delta")
+        pre=json_artifact(root,event,"cache_prestate_artifact")
+        if pre != {"identity":event.get("cache_identity"),"entries":[]}: fail("client cache was reused or nonempty")
         if phase in ("warm","post_restart") and event["hits_after"] <= event["hits_before"]: fail(f"{eco} {phase} did not increase cache hits")
-        integrity(event,eco)
+        recompute_integrity(root,event,eco)
         if phase=="post_restart":
             binding=event.get("restart")
             index=(r-1)*restarts//(rounds-1)
@@ -91,10 +160,12 @@ def validate(events, root, rounds, restarts, ledger):
     for eco in ECOSYSTEMS:
         group=[event for event in clients if event["ecosystem"]==eco]
         if len({event["cache_identity"] for event in group}) != rounds: fail(f"{eco} did not use fresh client caches")
-        if len({integrity(event,eco) for event in group}) != 1: fail(f"{eco} integrity changed across phases")
+        if len({recompute_integrity(root,event,eco) for event in group}) != 1: fail(f"{eco} integrity changed across phases")
     for r in range(1,rounds+1):
         group=[event for event in clients if event["round"]==r]
-        if max(interval(e)[0] for e in group) >= min(interval(e)[1] for e in group): fail(f"round {r} clients did not overlap")
+        ledgers={event["launch_artifact_sha256"] for event in group}
+        if len(ledgers)!=1 or len({event["launch_artifact"] for event in group})!=1: fail(f"round {r} lacks one central launch ledger")
+        if max(launch(root,e)["started_epoch_ms"] for e in group) >= min(launch(root,e)["ended_epoch_ms"] for e in group): fail(f"round {r} clients did not overlap")
     paths=[event for event in events if event.get("kind")=="failure_path"]
     for name in ("cancellation",):
         pair=[e for e in paths if e.get("path")==name]
@@ -111,7 +182,8 @@ def validate(events, root, rounds, restarts, ledger):
         for event in pair:
             after=event["_after_metrics"]
             if any(after[name] for name in ("temp_files","orphan_bodies","reservations")): fail("cancellation leaked temporary state or reservation")
-        if pair[1]["exit_code"] != 0 or pair[1].get("integrity_pass") is not True: fail(f"{name} retry did not recover")
+        if pair[1]["exit_code"] != 0: fail(f"{name} retry did not recover")
+        recompute_integrity(root,pair[1],pair[1]["ecosystem"])
         if pair[0]["ecosystem"]!=pair[1]["ecosystem"] or pair[0]["object"]!=pair[1]["object"] or pair[0]["integrity"]!=pair[1]["integrity"]: fail("cancellation retry target/integrity changed")
 
 def main():
