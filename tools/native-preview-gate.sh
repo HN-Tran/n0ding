@@ -76,7 +76,10 @@ print(os.path.realpath(value if os.path.isabs(value) else os.path.join(os.path.d
 PY
 )
 [[ $configured_cache == "$cache" ]] || die "effective TOML storage.path does not equal --cache"
-if [[ $mode == gate ]] && [[ -n $(find "$cache" -mindepth 1 -print -quit) ]]; then die "qualifying gate requires an empty dedicated cache"; fi
+# The running service creates empty per-repository directories during startup.
+# Treat those as an empty cache, while rejecting every file, symlink, socket, or
+# other entry that could carry state into the qualifying cold phase.
+if [[ $mode == gate ]] && [[ -n $(find "$cache" -mindepth 1 ! -type d -print -quit) ]]; then die "qualifying gate requires an empty dedicated cache"; fi
 [[ ! -e $evidence_root ]] || die "refusing to overwrite evidence path: $evidence_root"
 for hook in "$workload_hook" "$abort_hook" "$rollback_hook" "$anchor_hook"; do [[ -z $hook || -x $hook ]] || die "hook is not executable: $hook"; done
 [[ -z $canary_file || -r $canary_file ]] || die "canary file is not readable"
