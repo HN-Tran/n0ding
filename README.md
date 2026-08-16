@@ -8,15 +8,7 @@
 and Docker/OCI downloads.** It gives homelabs, CI runners, developer
 workstations, and small teams one small service and one persistent cache.
 
-```text
-npm / pip / uv / Docker
-           |
-           v
-        n0ding  ---- persistent local cache
-           |
-           v
- npmjs.org / PyPI / Docker Hub
-```
+![Clients request artifacts through n0ding, which uses a persistent local cache before public registries](docs/assets/architecture-overview.svg)
 
 | Ecosystem | Client path | Cached content |
 |---|---|---|
