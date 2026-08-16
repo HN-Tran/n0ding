@@ -84,10 +84,12 @@ All notable changes to n0ding are documented in this file. The project follows
   capacity alerts, backup/restore, canary scans, status checks, safe restarts,
   rollback, cleanup, and remaining not-ready warnings.
 
-## [0.1.0] - Unreleased (public preview)
+## [0.1.0] - 2026-08-16 (Public Preview)
 
 This section records the narrow public-registry, read-only preview baseline.
-No tag, public release, or published image exists yet.
+It is intended for evaluation and homelab use, not as a stable or
+production-ready service. It carries no availability guarantee or remediation
+SLA.
 
 ### Added
 

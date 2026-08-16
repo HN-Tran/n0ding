@@ -202,8 +202,11 @@ jobs:
           ./tools/verify-release-source.sh
           gh release create "$RELEASE_TAG" \
             --verify-tag \
+            --prerelease \
+            --latest=false \
             --generate-notes \
-            --title "n0ding ${RELEASE_TAG}" \
+            --title "n0ding ${RELEASE_TAG} Public Preview" \
+            --notes "Public Preview: intended for evaluation and homelab use. This release is not stable or production-ready and carries no availability guarantee or remediation SLA." \
             compose.yaml n0ding.toml install.sh install.ps1 \
             public-compose.yaml Caddyfile public-n0ding.toml \
             public.env.example SHA256SUMS
