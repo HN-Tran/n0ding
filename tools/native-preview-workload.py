@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Deployment adapter for the native focused Public Preview gate.
 
-This file is intentionally host-specific at the boundary (Docker daemon and
-cache path), but contains no credentials. The gate calls it with five args.
+This file is intentionally deployment-specific at the boundary (Docker daemon
+and cache path), but contains no host address or credentials. The gate calls it
+with five args.
 """
 import hashlib, json, os, pathlib, shutil, signal, subprocess, sys, threading, time, urllib.parse, urllib.request
 
@@ -32,11 +33,13 @@ repo=pathlib.Path(os.environ.get("N0DING_SOURCE_ROOT",pathlib.Path(__file__).res
 if not (repo/"tools/validate-native-preview-workload.py").is_file(): die("N0DING_SOURCE_ROOT must name the exact candidate checkout")
 cache=pathlib.Path(os.environ.get("N0DING_CACHE_PATH","")).resolve()
 if not cache.is_dir(): die("N0DING_CACHE_PATH must name the dedicated gate cache")
-if os.environ.get("N0DING_EXPECTED_BASE_URL",base).rstrip("/")!=base: die("unexpected deployment base URL")
+expected_base=os.environ.get("N0DING_EXPECTED_BASE_URL","").rstrip("/")
+if not expected_base and os.environ.get("N0DING_ALLOW_OTHER_ORIGIN")!="1": die("set N0DING_EXPECTED_BASE_URL to the exact deployment origin")
+if expected_base and expected_base!=base: die("unexpected deployment base URL")
 origin=urllib.parse.urlsplit(base)
 if origin.scheme!="http" or origin.path not in ("","/") or not origin.netloc: die("gate base URL must be an HTTP origin")
-if (origin.hostname,origin.port)!=("100.91.139.14",8081) and os.environ.get("N0DING_ALLOW_OTHER_ORIGIN")!="1": die("adapter expects 100.91.139.14:8081")
-if (origin.hostname,origin.port)==("100.91.139.14",8081) and cache!=pathlib.Path("/var/lib/n0ding-preview"): die("real preview origin requires /var/lib/n0ding-preview")
+expected_cache=os.environ.get("N0DING_EXPECTED_CACHE_PATH","")
+if expected_cache and cache!=pathlib.Path(expected_cache).resolve(): die("unexpected deployment cache path")
 work=evidence/f"workload-round-{round_number:02d}-{phase}"
 work.mkdir(mode=0o700)
 write_json(work/"deployment.json",{"base_url":base,"server_cache_path":str(cache),"round":round_number,"phase":phase})
